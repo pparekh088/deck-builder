@@ -33,7 +33,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -209,6 +209,11 @@ async def chat(request: ChatRequest):
                 "type": "preview_update",
                 "data": preview.model_dump()
             })
+            # Also include a lightweight status ping so clients that only listen to status can react
+            await manager.send_message(request.session_id, {
+                "type": "status",
+                "data": {"message": "Preview ready", "has_template": True}
+            })
             
             # Prepare response
             return ChatResponse(
@@ -311,6 +316,30 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             "message_count": len(session.chat_history)
                         }
                     })
+            elif message.get("type") == "get_preview":
+                session = session_service.get_session(session_id)
+                if session and session.current_markdown:
+                    try:
+                        _, slide_previews = ppt_service.markdown_to_pptx(
+                            markdown=session.current_markdown,
+                            template_id=session.template_id,
+                            session_id=session_id
+                        )
+                        preview = PresentationPreview(
+                            session_id=session_id,
+                            slides=slide_previews,
+                            total_slides=len(slide_previews),
+                            generated_at=datetime.now()
+                        )
+                        await websocket.send_json({
+                            "type": "preview_update",
+                            "data": preview.model_dump()
+                        })
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {"message": str(e)}
+                        })
                     
     except WebSocketDisconnect:
         manager.disconnect(session_id)

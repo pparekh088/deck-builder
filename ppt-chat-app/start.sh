@@ -109,8 +109,29 @@ if [ ! -f ".env" ]; then
     echo -e "${YELLOW}⚠️  No .env file found. Let's configure your environment...${NC}"
     echo ""
     
-    # Copy template
-    cp .env.example .env
+    # Create .env file with default template
+    cat > .env << 'EOF'
+# Azure OpenAI Configuration
+AZURE_OPENAI_API_KEY=your_api_key_here
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4-turbo
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# Application Settings
+SECRET_KEY=your-secret-key-here
+
+# Redis Configuration (Optional - leave blank to use in-memory storage)
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=
+
+# CORS Settings (Development)
+CORS_ORIGINS=http://localhost:5174,http://localhost:3000
+
+# File Upload Settings
+MAX_FILE_SIZE=10485760
+UPLOAD_DIR=uploads
+TEMPLATES_DIR=templates
+EOF
     
     # Check if user wants to configure now
     echo -e "${BLUE}Would you like to configure your Azure OpenAI settings now?${NC}"
@@ -137,7 +158,7 @@ if [ ! -f ".env" ]; then
         prompt_user "Redis Password (leave blank for no auth)" REDIS_PASSWORD ""
         
         # Generate a secure secret key
-        SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
+        SECRET_KEY=$($PYTHON_CMD -c 'import secrets; print(secrets.token_hex(32))')
         
         # Update .env file
         if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -182,7 +203,7 @@ fi
 # Start backend in background
 echo ""
 echo "Starting backend server..."
-python -m uvicorn app.main:app --reload --port 8000 > backend.log 2>&1 &
+$PYTHON_CMD -m uvicorn app.main:app --reload --port 8001 > backend.log 2>&1 &
 BACKEND_PID=$!
 echo "Backend started with PID: $BACKEND_PID"
 
@@ -221,12 +242,12 @@ echo -e "${BLUE}⏳ Waiting for services to start...${NC}"
 
 # Check if backend is running
 for i in {1..10}; do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8001/health > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Backend is running${NC}"
         break
     fi
     if [ $i -eq 10 ]; then
-        echo -e "${RED}❌ Backend failed to start. Check backend/backend.log for errors${NC}"
+        echo -e "${RED}❌ Backend failed to start on port 8001. Check backend/backend.log for errors${NC}"
         echo "Last 20 lines of backend log:"
         tail -20 backend/backend.log
     else
@@ -237,12 +258,12 @@ done
 
 # Check if frontend is running
 for i in {1..10}; do
-    if curl -s http://localhost:5173 > /dev/null 2>&1; then
+    if curl -s http://localhost:5174 > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Frontend is running${NC}"
         break
     fi
     if [ $i -eq 10 ]; then
-        echo -e "${RED}❌ Frontend failed to start. Check frontend/frontend.log for errors${NC}"
+        echo -e "${RED}❌ Frontend failed to start on port 5174. Check frontend/frontend.log for errors${NC}"
         echo "Last 20 lines of frontend log:"
         tail -20 frontend/frontend.log
     else
@@ -254,9 +275,9 @@ done
 # Check health status
 echo ""
 echo -e "${BLUE}🔍 Checking system health...${NC}"
-health_response=$(curl -s http://localhost:8000/health)
+health_response=$(curl -s http://localhost:8001/health)
 if [ $? -eq 0 ]; then
-    health_status=$(echo $health_response | python -c "import sys, json; data=json.load(sys.stdin); print(data.get('status', 'unknown'))" 2>/dev/null)
+    health_status=$(echo $health_response | $PYTHON_CMD -c "import sys, json; data=json.load(sys.stdin); print(data.get('status', 'unknown'))" 2>/dev/null)
     
     if [[ "$health_status" == "healthy" ]]; then
         echo -e "${GREEN}✅ System is healthy${NC}"
@@ -273,9 +294,9 @@ fi
 echo ""
 echo -e "${GREEN}✨ PowerPoint AI Generator is running!${NC}"
 echo ""
-echo -e "${BLUE}🌐 Access the application at:${NC} http://localhost:5173"
-echo -e "${BLUE}📚 API documentation at:${NC} http://localhost:8000/docs"
-echo -e "${BLUE}🏥 Health status at:${NC} http://localhost:8000/health"
+echo -e "${BLUE}🌐 Access the application at:${NC} http://localhost:5174"
+echo -e "${BLUE}📚 API documentation at:${NC} http://localhost:8001/docs"
+echo -e "${BLUE}🏥 Health status at:${NC} http://localhost:8001/health"
 echo ""
 echo -e "${BLUE}📋 Process IDs:${NC}"
 echo "   Backend:  $BACKEND_PID"

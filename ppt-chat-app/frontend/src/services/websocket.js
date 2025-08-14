@@ -1,6 +1,6 @@
 import { reactive } from 'vue';
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8001';
 
 class WebSocketService {
   constructor() {
@@ -38,7 +38,10 @@ class WebSocketService {
           this.state.connected = true;
           this.state.connecting = false;
           this.reconnectAttempts = 0;
+          // Ask server for initial status
           this.sendMessage({ type: 'get_status' });
+          // Also request a preview snapshot in case we missed an earlier push
+          this.sendMessage({ type: 'get_preview' });
           resolve();
         };
 

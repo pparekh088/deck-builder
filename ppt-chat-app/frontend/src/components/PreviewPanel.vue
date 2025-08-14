@@ -17,7 +17,7 @@
     <!-- Preview Content -->
     <div class="flex-1 overflow-y-auto p-4">
       <div v-if="!presentationPreview" class="flex flex-col items-center justify-center h-full text-gray-500">
-        <PresentationChartBarIcon class="w-24 h-24 mb-4 text-gray-300" />
+        <PresentationChartBarIcon class="w-16 h-16 mb-4 text-gray-300" />
         <p class="text-lg font-medium">No presentation yet</p>
         <p class="text-sm mt-2">Start chatting to generate slides</p>
       </div>

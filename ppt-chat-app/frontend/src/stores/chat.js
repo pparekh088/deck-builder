@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { sessionAPI, templateAPI, chatAPI, downloadAPI } from '../services/api';
+import { sessionAPI, templateAPI, chatAPI, downloadAPI, previewAPI } from '../services/api';
 import wsService from '../services/websocket';
 
 export const useChatStore = defineStore('chat', {
@@ -58,7 +58,9 @@ export const useChatStore = defineStore('chat', {
 
       // Preview update
       wsService.onPreviewUpdate((data) => {
+        // WebSocket push wins
         this.presentationPreview = data;
+        this.statusMessage = 'Presentation updated';
       });
 
       // Status updates
@@ -119,9 +121,15 @@ export const useChatStore = defineStore('chat', {
         // Add AI response
         this.addMessage('assistant', response.data.response);
 
-        // Update preview if available
+        // Update preview if available (fallback in case WS update is missed)
         if (response.data.preview_available) {
-          this.statusMessage = 'Presentation updated';
+          try {
+            const previewResp = await previewAPI.getPreview(this.sessionId);
+            this.presentationPreview = previewResp.data;
+            this.statusMessage = 'Presentation updated';
+          } catch (e) {
+            // ignore; WS may still deliver the update
+          }
         }
 
         return response.data;

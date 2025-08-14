@@ -23,7 +23,7 @@
     <!-- Messages Area -->
     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
       <div v-if="messages.length === 0" class="text-center text-gray-500 mt-8">
-        <DocumentTextIcon class="w-16 h-16 mx-auto mb-4 text-gray-300" />
+        <DocumentTextIcon class="w-12 h-12 mx-auto mb-4 text-gray-300" />
         <p class="text-lg font-medium">Start a conversation</p>
         <p class="text-sm mt-2">Upload a template and begin creating your presentation</p>
       </div>
@@ -76,7 +76,7 @@
                  @change="handleTemplateUpload" 
                  class="hidden">
           <div class="text-center">
-            <DocumentArrowUpIcon class="w-8 h-8 mx-auto mb-2 text-gray-400" />
+            <DocumentArrowUpIcon class="w-6 h-6 mx-auto mb-2 text-gray-400" />
             <p class="text-sm text-gray-600">Click to upload PowerPoint template (.pptx)</p>
           </div>
         </label>
@@ -119,7 +119,7 @@
                    @change="handleTemplateChange" 
                    class="hidden">
             <div class="text-center">
-              <DocumentArrowUpIcon class="w-8 h-8 mx-auto mb-2 text-gray-400" />
+              <DocumentArrowUpIcon class="w-6 h-6 mx-auto mb-2 text-gray-400" />
               <p class="text-sm text-gray-600">Click to upload new template</p>
             </div>
           </label>

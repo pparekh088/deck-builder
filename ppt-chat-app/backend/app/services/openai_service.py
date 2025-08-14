@@ -82,25 +82,36 @@ class OpenAIService:
             raise
     
     def _extract_presentation_markdown(self, text: str) -> str:
-        """Extract and clean markdown content suitable for presentation"""
+        """Extract and clean markdown content suitable for presentation.
+
+        Many models wrap markdown in fenced code blocks like ```markdown ... ```.
+        Previously we skipped everything inside code fences which resulted in
+        an empty string and no preview. Here we ignore the fence markers but
+        still keep markdown-looking lines both inside and outside fences.
+        """
         lines = text.split('\n')
-        markdown_lines = []
-        in_code_block = False
-        
-        for line in lines:
-            # Skip code block markers
+        markdown_lines: list[str] = []
+
+        for raw_line in lines:
+            line = raw_line.strip('\r')
+            # Ignore code fence markers entirely
             if line.strip().startswith('```'):
-                in_code_block = not in_code_block
                 continue
-            
-            if not in_code_block:
-                # Keep headers and bullet points
-                if line.strip().startswith('#') or line.strip().startswith('-') or line.strip().startswith('*'):
-                    markdown_lines.append(line)
-                elif line.strip() and markdown_lines and not line.strip().startswith('Note:'):
-                    # Keep non-empty lines that are part of content
-                    markdown_lines.append(line)
-        
+
+            stripped = line.strip()
+            is_header = stripped.startswith('#')
+            is_bullet = stripped.startswith('- ') or stripped.startswith('* ')
+
+            if is_header or is_bullet:
+                markdown_lines.append(line)
+            elif stripped and markdown_lines and not stripped.startswith('Note:'):
+                # Continue the previous bullet/paragraph line if content already started
+                markdown_lines.append(line)
+
+        # Fallback: if nothing captured, return original text so downstream can still try
+        if not markdown_lines:
+            return text
+
         return '\n'.join(markdown_lines)
     
     async def refine_content(self, markdown: str, instruction: str) -> str:

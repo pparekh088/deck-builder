@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
+from pydantic import field_validator
 import os
 
 class Settings(BaseSettings):
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
     redis_decode_responses: bool = True
     
     # CORS Settings
-    cors_origins: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: str = "http://localhost:5174,http://localhost:3000"
     
     # File Upload Settings
     max_file_size: int = 10485760  # 10MB
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+    
+    def get_cors_origins(self) -> List[str]:
+        """Convert comma-separated CORS origins string to list"""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
     
     def get_redis_url(self) -> str:
         """Build Redis URL with authentication if password is provided"""
