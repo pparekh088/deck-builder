@@ -39,7 +39,36 @@ A full-stack web application that enables users to generate PowerPoint presentat
 
 ## Installation
 
-### Backend Setup
+### Quick Start (Recommended)
+
+The easiest way to get started is using the automated startup scripts:
+
+#### Linux/macOS:
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+#### Windows:
+```cmd
+start.bat
+```
+
+**The startup scripts will:**
+- ✅ Check all prerequisites (Python, Node.js, npm)
+- ✅ Create and activate virtual environments
+- ✅ Install all dependencies automatically
+- ✅ Create `.env` file and guide you through configuration
+- ✅ Prompt for Azure OpenAI credentials
+- ✅ Generate secure secret keys
+- ✅ Start both backend and frontend servers
+- ✅ Monitor service health
+- ✅ Display logs if errors occur
+- ✅ Provide colored output for better readability
+
+### Manual Setup (Alternative)
+
+If you prefer manual setup or the scripts don't work for your environment:
 
 1. Navigate to the backend directory:
 ```bash
