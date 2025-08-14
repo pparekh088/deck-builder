@@ -12,11 +12,26 @@ logger = logging.getLogger(__name__)
 class SessionService:
     def __init__(self):
         try:
-            self.redis_client = redis.from_url(settings.redis_url, decode_responses=True)
-            self.redis_available = True
+            # Use the configured Redis URL with authentication
+            redis_url = settings.get_redis_url()
+            self.redis_client = redis.from_url(
+                redis_url, 
+                decode_responses=settings.redis_decode_responses,
+                socket_connect_timeout=5,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
+            # Test connection
             self.redis_client.ping()
-        except:
-            logger.warning("Redis not available, using in-memory storage")
+            self.redis_available = True
+            logger.info("Successfully connected to Redis")
+        except redis.ConnectionError as e:
+            logger.warning(f"Redis connection failed: {e}. Using in-memory storage")
+            self.redis_available = False
+            self.sessions = {}  # Fallback to in-memory storage
+        except Exception as e:
+            logger.warning(f"Redis not available: {e}. Using in-memory storage")
             self.redis_available = False
             self.sessions = {}  # Fallback to in-memory storage
     
@@ -37,6 +52,10 @@ class SessionService:
                     return SessionInfo(**json.loads(data))
             else:
                 return self.sessions.get(session_id)
+        except redis.ConnectionError:
+            # Fallback to in-memory if Redis connection is lost
+            logger.warning("Redis connection lost, falling back to in-memory")
+            return self.sessions.get(session_id)
         except Exception as e:
             logger.error(f"Error getting session: {str(e)}")
             return None
@@ -105,6 +124,10 @@ class SessionService:
                 )
             else:
                 self.sessions[session_id] = session_info
+        except redis.ConnectionError as e:
+            logger.error(f"Redis connection error while saving: {e}")
+            # Fallback to in-memory
+            self.sessions[session_id] = session_info
         except Exception as e:
             logger.error(f"Error saving session: {str(e)}")
             # Fallback to in-memory
@@ -114,9 +137,15 @@ class SessionService:
         """Delete a session"""
         try:
             if self.redis_available:
-                self.redis_client.delete(f"session:{session_id}")
-            else:
+                try:
+                    self.redis_client.delete(f"session:{session_id}")
+                except redis.ConnectionError:
+                    logger.warning("Redis connection lost during delete")
+            
+            # Also remove from in-memory if present
+            if session_id in self.sessions:
                 self.sessions.pop(session_id, None)
+            
             return True
         except Exception as e:
             logger.error(f"Error deleting session: {str(e)}")
@@ -126,13 +155,44 @@ class SessionService:
         """Get list of active session IDs"""
         try:
             if self.redis_available:
-                keys = self.redis_client.keys("session:*")
-                return [key.split(":")[-1] for key in keys]
+                try:
+                    keys = self.redis_client.keys("session:*")
+                    return [key.split(":")[-1] for key in keys]
+                except redis.ConnectionError:
+                    logger.warning("Redis connection lost, using in-memory sessions")
+                    return list(self.sessions.keys())
             else:
                 return list(self.sessions.keys())
         except Exception as e:
             logger.error(f"Error getting active sessions: {str(e)}")
             return []
+    
+    def health_check(self) -> Dict[str, Any]:
+        """Check the health of the session service"""
+        try:
+            if self.redis_available:
+                self.redis_client.ping()
+                redis_info = self.redis_client.info()
+                return {
+                    "status": "healthy",
+                    "storage": "redis",
+                    "redis_version": redis_info.get("redis_version", "unknown"),
+                    "connected_clients": redis_info.get("connected_clients", 0),
+                    "used_memory_human": redis_info.get("used_memory_human", "unknown")
+                }
+            else:
+                return {
+                    "status": "degraded",
+                    "storage": "in-memory",
+                    "session_count": len(self.sessions),
+                    "warning": "Redis not available, using in-memory storage"
+                }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "storage": "in-memory",
+                "error": str(e)
+            }
 
 # Singleton instance
 session_service = SessionService()

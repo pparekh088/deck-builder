@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 import os
 
 class Settings(BaseSettings):
@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     
     # Redis Configuration
     redis_url: str = "redis://localhost:6379"
+    redis_password: Optional[str] = None
+    redis_db: int = 0
+    redis_decode_responses: bool = True
     
     # CORS Settings
     cors_origins: List[str] = ["http://localhost:5173", "http://localhost:3000"]
@@ -28,6 +31,27 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+    
+    def get_redis_url(self) -> str:
+        """Build Redis URL with authentication if password is provided"""
+        if self.redis_password:
+            # Parse the base URL and add authentication
+            if "://" in self.redis_url:
+                protocol, rest = self.redis_url.split("://", 1)
+                # Remove any existing auth from URL
+                if "@" in rest:
+                    rest = rest.split("@", 1)[1]
+                return f"{protocol}://:{self.redis_password}@{rest}/{self.redis_db}"
+            else:
+                return f"redis://:{self.redis_password}@{self.redis_url}/{self.redis_db}"
+        else:
+            # Add DB number to URL if not present
+            if self.redis_url.endswith("/"):
+                return f"{self.redis_url}{self.redis_db}"
+            elif "/" not in self.redis_url.split("://", 1)[1]:
+                return f"{self.redis_url}/{self.redis_db}"
+            else:
+                return self.redis_url
 
 settings = Settings()
 

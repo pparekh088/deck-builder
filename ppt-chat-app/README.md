@@ -35,7 +35,7 @@ A full-stack web application that enables users to generate PowerPoint presentat
 - Python 3.9+
 - Node.js 16+
 - Azure OpenAI API access
-- Redis (optional, for production)
+- Redis (optional, for production - supports authentication)
 
 ## Installation
 
@@ -69,6 +69,26 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4-turbo
 AZURE_OPENAI_API_VERSION=2024-02-01
 ```
+
+6. Configure Redis (optional):
+```env
+# For local Redis without authentication
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+
+# For Redis with authentication
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=your_secure_password
+REDIS_DB=0
+
+# For Redis Cloud or remote Redis
+REDIS_URL=redis://redis-server.example.com:6379
+REDIS_PASSWORD=your_secure_password
+REDIS_DB=0
+```
+
+**Note**: If Redis is not available or misconfigured, the application will automatically fall back to in-memory session storage.
 
 ### Frontend Setup
 
@@ -201,6 +221,8 @@ Key settings in `.env`:
 - `AZURE_OPENAI_DEPLOYMENT_NAME`: Model deployment name
 - `SECRET_KEY`: JWT secret for session management
 - `REDIS_URL`: Redis connection URL (optional)
+- `REDIS_PASSWORD`: Redis authentication password (optional)
+- `REDIS_DB`: Redis database number (default: 0)
 - `MAX_FILE_SIZE`: Maximum template file size (bytes)
 
 ### Frontend Configuration
@@ -209,6 +231,79 @@ Environment variables in `.env`:
 
 - `VITE_API_URL`: Backend API URL
 - `VITE_WS_URL`: WebSocket URL
+
+## Redis Setup (Optional but Recommended for Production)
+
+### Local Redis with Password
+
+1. Install Redis:
+```bash
+# Ubuntu/Debian
+sudo apt-get install redis-server
+
+# macOS
+brew install redis
+
+# Docker
+docker run -d -p 6379:6379 --name redis redis:alpine --requirepass your_password
+```
+
+2. Configure Redis password:
+```bash
+# Edit redis.conf
+requirepass your_secure_password
+```
+
+3. Update `.env`:
+```env
+REDIS_URL=redis://localhost:6379
+REDIS_PASSWORD=your_secure_password
+```
+
+### Redis Cloud Setup
+
+1. Create account at [Redis Cloud](https://redis.com/try-free/)
+2. Create a database
+3. Copy connection details to `.env`:
+```env
+REDIS_URL=redis://redis-12345.c1.us-east-1-2.ec2.cloud.redislabs.com:12345
+REDIS_PASSWORD=your_redis_cloud_password
+```
+
+### Testing Redis Connection
+
+Check Redis connection status via the health endpoint:
+```bash
+curl http://localhost:8000/health
+```
+
+Response will show Redis status:
+```json
+{
+  "status": "healthy",
+  "services": {
+    "session_storage": {
+      "status": "healthy",
+      "storage": "redis",
+      "redis_version": "7.0.5"
+    }
+  }
+}
+```
+
+If Redis is unavailable:
+```json
+{
+  "status": "degraded",
+  "services": {
+    "session_storage": {
+      "status": "degraded",
+      "storage": "in-memory",
+      "warning": "Redis not available, using in-memory storage"
+    }
+  }
+}
+```
 
 ## Development
 

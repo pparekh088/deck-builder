@@ -336,12 +336,44 @@ async def delete_session(session_id: str):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "version": "1.0.0"
-    }
+    """Health check endpoint with detailed service status"""
+    try:
+        # Get session service health
+        session_health = session_service.health_check()
+        
+        # Check if Azure OpenAI is configured
+        openai_configured = bool(settings.azure_openai_api_key and settings.azure_openai_endpoint)
+        
+        # Overall health status
+        overall_status = "healthy"
+        if session_health["status"] == "unhealthy":
+            overall_status = "unhealthy"
+        elif session_health["status"] == "degraded":
+            overall_status = "degraded"
+        elif not openai_configured:
+            overall_status = "degraded"
+        
+        return {
+            "status": overall_status,
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0",
+            "services": {
+                "session_storage": session_health,
+                "openai": {
+                    "configured": openai_configured,
+                    "endpoint": settings.azure_openai_endpoint if openai_configured else None
+                },
+                "websocket": {
+                    "active_connections": len(manager.active_connections)
+                }
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     import uvicorn
