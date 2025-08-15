@@ -3,6 +3,9 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+# Import vision models
+from app.models.vision import ShapeVisionLabel, VisionRole
+
 class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
@@ -88,6 +91,14 @@ class PlaceholderInfo(BaseModel):
     height: Optional[float] = None  # In inches
     left: Optional[float] = None  # Position from left in inches
     top: Optional[float] = None  # Position from top in inches
+    # Vision-based labeling
+    vision: Optional[ShapeVisionLabel] = None
+    # Additional metadata
+    alt_text: Optional[str] = None
+    tags: List[str] = []  # Designer tags from name/alt_text
+    bbox_emu: Optional[Dict[str, int]] = None  # {left, top, width, height} in EMU
+    bbox_px: Optional[Dict[str, int]] = None  # {left, top, width, height} in pixels
+    z_order: Optional[int] = None  # Z-order for layering
 
 class SlideLayoutSignature(BaseModel):
     """Signature of a slide layout from the template"""
@@ -124,12 +135,25 @@ class TemplateProfile(BaseModel):
     slide_width: float  # In inches
     slide_height: float  # In inches
     analyzed_at: datetime = datetime.now()
+    # Vision analysis metadata
+    vision_enabled: bool = False
+    vision_coverage: float = 0.0  # % of shapes with vision labels
     
     def get_layout_by_id(self, layout_id: int) -> Optional[SlideLayoutSignature]:
         return next((l for l in self.layout_catalog if l.layout_id == layout_id), None)
     
     def get_layouts_with_placeholder(self, placeholder_type: PlaceholderType) -> List[SlideLayoutSignature]:
         return [l for l in self.layout_catalog if l.has_placeholder_type(placeholder_type)]
+    
+    def get_layouts_with_vision_role(self, role: VisionRole) -> List[SlideLayoutSignature]:
+        """Get layouts containing shapes with specific vision role"""
+        layouts = []
+        for layout in self.layout_catalog:
+            for placeholder in layout.placeholders:
+                if placeholder.vision and placeholder.vision.role == role:
+                    layouts.append(layout)
+                    break
+        return layouts
 
 class SlideContentNeeds(BaseModel):
     """What content a slide needs"""

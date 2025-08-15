@@ -26,6 +26,9 @@ from app.services.layout_matcher import layout_matcher
 from app.services.slide_composer import slide_composer
 from app.services.presentation_validator import presentation_validator
 
+# Import the template routes
+from app.api.routes.template import router as template_router
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,6 +48,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include the template router
+app.include_router(template_router)
 
 # Mount static files for serving generated files
 if not os.path.exists(settings.upload_dir):
