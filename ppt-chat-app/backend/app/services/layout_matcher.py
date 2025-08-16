@@ -1,6 +1,7 @@
 """
 Layout Matcher Service
 Matches slide specifications to the best available template layouts using scoring algorithms
+Enhanced with vision-based labeling for improved accuracy
 """
 
 import logging
@@ -11,6 +12,7 @@ from app.models import (
     SlideSpec, SlideLayoutSignature, TemplateProfile,
     SlideMapping, PlaceholderType
 )
+from app.models.vision import VisionRole
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +29,27 @@ class LayoutMatcher:
     """Matches slide specifications to optimal template layouts"""
     
     def __init__(self):
-        # Scoring weights
+        # Updated scoring weights with vision
         self.weights = {
-            'title_match': 0.25,
-            'content_match': 0.30,
-            'visual_match': 0.20,
-            'complexity_match': 0.15,
-            'layout_type_match': 0.10
+            'tag_match': 0.30,      # Designer tags (highest priority)
+            'vision_match': 0.25,   # Vision role match
+            'title_match': 0.15,    # Title placeholder
+            'content_match': 0.15,  # Content areas
+            'visual_match': 0.10,   # Pictures/charts/tables
+            'complexity_match': 0.05  # Layout complexity
+        }
+        
+        # Vision role mapping for content types
+        self.content_role_map = {
+            'title': VisionRole.Title,
+            'subtitle': VisionRole.Subtitle,
+            'bullets': VisionRole.Bullets,
+            'paragraph': VisionRole.Paragraph,
+            'table': VisionRole.Table,
+            'chart': VisionRole.Chart,
+            'image': VisionRole.HeroImage,
+            'quote': VisionRole.Paragraph,
+            'section': VisionRole.SectionHeader
         }
     
     def match_slides_to_layouts(
@@ -113,6 +129,7 @@ class LayoutMatcher:
     ) -> LayoutScore:
         """
         Score how well a layout matches a slide specification
+        Now includes vision-based scoring
         
         Args:
             slide: Slide specification
@@ -124,35 +141,45 @@ class LayoutMatcher:
         scores = {}
         adaptations = []
         
-        # 1. Title match (does layout have title placeholder?)
+        # 1. Tag match (highest priority) - NEW
+        tag_score, tag_adaptations = self._score_tag_match(slide, layout)
+        scores['tag_match'] = tag_score
+        adaptations.extend(tag_adaptations)
+        
+        # 2. Vision match - NEW
+        vision_score, vision_adaptations = self._score_vision_match(slide, layout)
+        scores['vision_match'] = vision_score
+        adaptations.extend(vision_adaptations)
+        
+        # 3. Title match (existing but lower weight now)
         has_title = layout.has_placeholder_type(PlaceholderType.TITLE)
         scores['title_match'] = 1.0 if has_title else 0.0
         if not has_title and slide.title:
             adaptations.append("No title placeholder - will use first text area")
         
-        # 2. Content match (body/content placeholders vs bullets)
+        # 4. Content match (existing)
         content_score, content_adaptations = self._score_content_match(slide, layout)
         scores['content_match'] = content_score
         adaptations.extend(content_adaptations)
         
-        # 3. Visual match (pictures, charts, tables)
+        # 5. Visual match (existing)
         visual_score, visual_adaptations = self._score_visual_match(slide, layout)
         scores['visual_match'] = visual_score
         adaptations.extend(visual_adaptations)
         
-        # 4. Complexity match (simple vs complex layouts)
+        # 6. Complexity match (existing)
         complexity_score = self._score_complexity_match(slide, layout)
         scores['complexity_match'] = complexity_score
         
-        # 5. Layout type match (based on layout name heuristics)
-        type_score = self._score_layout_type(slide, layout)
-        scores['layout_type_match'] = type_score
-        
         # Calculate weighted total
         total_score = sum(
-            scores[key] * self.weights[key]
+            scores[key] * self.weights.get(key, 0)
             for key in scores
         )
+        
+        # Apply penalties for placing in non-content areas
+        penalty = self._calculate_placement_penalty(layout)
+        total_score *= (1.0 - penalty)
         
         return LayoutScore(
             layout_id=layout.layout_id,
@@ -161,6 +188,127 @@ class LayoutMatcher:
             component_scores=scores,
             adaptations_needed=adaptations
         )
+    
+    def _score_tag_match(
+        self,
+        slide: SlideSpec,
+        layout: SlideLayoutSignature
+    ) -> Tuple[float, List[str]]:
+        """Score based on designer tags (slot:* annotations)"""
+        score = 0.0
+        adaptations = []
+        
+        # Extract required content types from slide
+        required_tags = set()
+        if slide.title:
+            required_tags.add('slot:title')
+        if slide.bullets:
+            required_tags.add('slot:bullets')
+        if slide.needs.has_picture:
+            required_tags.add('slot:image')
+        if slide.needs.has_table:
+            required_tags.add('slot:table')
+        if slide.needs.has_chart:
+            required_tags.add('slot:chart')
+        
+        # Check how many tags are satisfied
+        found_tags = set()
+        for placeholder in layout.placeholders:
+            if placeholder.tags:
+                found_tags.update(placeholder.tags)
+        
+        if required_tags:
+            matched = required_tags.intersection(found_tags)
+            score = len(matched) / len(required_tags)
+            
+            missing = required_tags - found_tags
+            if missing:
+                adaptations.append(f"Missing tagged slots: {', '.join(missing)}")
+        else:
+            # No specific tags required
+            score = 0.5  # Neutral score
+        
+        return score, adaptations
+    
+    def _score_vision_match(
+        self,
+        slide: SlideSpec,
+        layout: SlideLayoutSignature
+    ) -> Tuple[float, List[str]]:
+        """Score based on vision role labels"""
+        score = 0.0
+        adaptations = []
+        
+        # Count available vision roles
+        vision_roles = {}
+        placeable_count = 0
+        
+        for placeholder in layout.placeholders:
+            if placeholder.vision:
+                role = placeholder.vision.role
+                if placeholder.vision.place_content:
+                    placeable_count += 1
+                    if role not in vision_roles:
+                        vision_roles[role] = []
+                    vision_roles[role].append(placeholder)
+        
+        if not vision_roles:
+            # No vision labels, fallback to neutral score
+            return 0.5, ["No vision labels available"]
+        
+        # Score based on required content
+        matches = 0
+        requirements = 0
+        
+        # Check title
+        if slide.title:
+            requirements += 1
+            if 'Title' in vision_roles or 'SectionHeader' in vision_roles:
+                matches += 1
+            else:
+                adaptations.append("No Title role identified by vision")
+        
+        # Check bullets/content
+        if slide.bullets:
+            requirements += 1
+            if 'Bullets' in vision_roles or 'Paragraph' in vision_roles:
+                matches += 1
+                # Check if we have enough bullet areas
+                bullet_areas = len(vision_roles.get('Bullets', []))
+                if len(slide.bullets) > 10 and bullet_areas < 2:
+                    adaptations.append("May need to split bullets (only 1 bullet area)")
+            else:
+                adaptations.append("No Bullets/Paragraph role identified")
+        
+        # Check visual elements
+        if slide.needs.has_picture:
+            requirements += 1
+            if 'HeroImage' in vision_roles or 'Picture' in vision_roles:
+                matches += 1
+            else:
+                adaptations.append("No image placeholder identified by vision")
+        
+        if slide.needs.has_table:
+            requirements += 1
+            if 'Table' in vision_roles:
+                matches += 1
+            else:
+                adaptations.append("No table placeholder identified by vision")
+        
+        if slide.needs.has_chart:
+            requirements += 1
+            if 'Chart' in vision_roles:
+                matches += 1
+            else:
+                adaptations.append("No chart placeholder identified by vision")
+        
+        # Calculate score
+        if requirements > 0:
+            score = matches / requirements
+        else:
+            score = 1.0 if placeable_count > 0 else 0.0
+        
+        return score, adaptations
     
     def _score_content_match(
         self,
@@ -387,6 +535,25 @@ class LayoutMatcher:
                 )
         
         return None
+
+    def _calculate_placement_penalty(self, layout: SlideLayoutSignature) -> float:
+        """Calculate penalty for layouts with non-placeable areas"""
+        penalty = 0.0
+        total_shapes = len(layout.placeholders)
+        non_placeable = 0
+        
+        for placeholder in layout.placeholders:
+            if placeholder.vision and not placeholder.vision.place_content:
+                non_placeable += 1
+                # Higher penalty for decorative elements
+                if placeholder.vision.role in ['Decor', 'Logo', 'Footer']:
+                    penalty += 0.05
+        
+        # Don't penalize too much for brand elements
+        if total_shapes > 0:
+            penalty = min(penalty, 0.3)  # Cap at 30% penalty
+        
+        return penalty
 
 # Create singleton instance
 layout_matcher = LayoutMatcher()
