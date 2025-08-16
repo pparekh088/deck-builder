@@ -4,23 +4,29 @@ Test 3-pass render with overflow detection and correction
 
 import pytest
 import subprocess
+import shutil
+import os
 from .utils import (
     create_fixture_pptx, APIClient, simple_spec, wait_for_api, get_env_flag
 )
 
 
-def check_libreoffice_available():
+def soffice_available():
     """Check if LibreOffice is available"""
-    try:
-        result = subprocess.run(
-            ["soffice", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except:
-        return False
+    soffice_path = os.getenv("LIBREOFFICE_PATH", "soffice")
+    return bool(shutil.which(soffice_path))
+
+
+# Skip all tests in this module if LibreOffice is not available
+pytestmark = pytest.mark.skipif(
+    not soffice_available(),
+    reason="LibreOffice not available; skipping overflow measurement test"
+)
+
+
+def check_libreoffice_available():
+    """Legacy function for compatibility"""
+    return soffice_available()
 
 
 class TestRenderOverflowLoop:
@@ -33,7 +39,7 @@ class TestRenderOverflowLoop:
         if not get_env_flag("RENDER_MEASURE_ENABLED"):
             pytest.skip("RENDER_MEASURE_ENABLED not set to true")
         
-        # Check if LibreOffice is available
+        # Double-check LibreOffice (redundant but safe)
         if not check_libreoffice_available():
             pytest.skip("LibreOffice not available - required for PDF conversion")
         

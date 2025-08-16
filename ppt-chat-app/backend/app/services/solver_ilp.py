@@ -3,11 +3,18 @@ Integer Linear Programming (ILP) solver for optimal content-to-shape mapping
 """
 
 import logging
-from typing import List, Dict, Any, Callable, Optional, Tuple
+from typing import List, Dict, Any, Callable, Optional, Tuple, Union
 import pulp
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+class SolverInfeasibleError(Exception):
+    """Raised when the ILP problem is infeasible"""
+    def __init__(self, message: str, debug_info: Dict[str, Any]):
+        super().__init__(message)
+        self.debug_info = debug_info
 
 
 def solve_assignment(
@@ -16,8 +23,9 @@ def solve_assignment(
     weight_fn: Callable[[Dict, Dict], float],
     compat_fn: Callable[[Dict, Dict], bool],
     timeout: int = 10,
-    msg: bool = False
-) -> Dict[str, str]:
+    msg: bool = False,
+    debug: bool = False
+) -> Union[Dict[str, str], Tuple[Dict[str, str], Dict[str, Any]]]:
     """
     Solve the content-to-shape assignment problem using ILP
     
@@ -28,12 +36,28 @@ def solve_assignment(
         compat_fn: Function that returns True if content-shape pair is compatible
         timeout: Solver timeout in seconds
         msg: Whether to show solver messages
+        debug: If True, return (mapping, debug_info) tuple with detailed diagnostics
     
     Returns:
-        Mapping from content_id to shape_sid
+        If debug=False: Mapping from content_id to shape_sid
+        If debug=True: Tuple of (mapping, debug_info) with diagnostics
     """
+    debug_info = {
+        "objective_value": 0.0,
+        "status": "Not solved",
+        "binding_constraints": [],
+        "pair_weights": {},
+        "incompatibility_reasons": {},
+        "valid_pairs": [],
+        "total_content": len(content_items),
+        "total_shapes": len(shape_items)
+    }
+    
     if not content_items or not shape_items:
         logger.warning("Empty content or shape items for ILP solver")
+        if debug:
+            debug_info["status"] = "Empty input"
+            return {}, debug_info
         return {}
     
     # Create the optimization problem
@@ -43,20 +67,67 @@ def solve_assignment(
     x_vars = {}
     valid_pairs = []
     
+    # Ensure shape IDs are unique (fix for the failing test)
+    shape_id_map = {}
+    seen_sids = set()
+    for s_item in shape_items:
+        original_sid = s_item.get('sid') or s_item.get('id')
+        if not original_sid:
+            original_sid = f"shape_{id(s_item)}"
+        
+        # Only modify if we've seen this sid before
+        sid = original_sid
+        if sid in seen_sids:
+            # Make unique by appending counter
+            counter = 1
+            while f"{original_sid}_{counter}" in seen_sids:
+                counter += 1
+            sid = f"{original_sid}_{counter}"
+        
+        seen_sids.add(sid)
+        s_item['sid'] = sid  # Ensure sid is set
+    
     for c_item in content_items:
         for s_item in shape_items:
-            if compat_fn(c_item, s_item):
-                var_name = f"x_{c_item['id']}_{s_item['sid']}"
-                x_vars[(c_item['id'], s_item['sid'])] = pulp.LpVariable(
+            c_id = c_item['id']
+            s_id = s_item['sid']
+            
+            # Check compatibility
+            is_compat = compat_fn(c_item, s_item)
+            
+            if is_compat:
+                var_name = f"x_{c_id}_{s_id}"
+                x_vars[(c_id, s_id)] = pulp.LpVariable(
                     var_name, 
                     lowBound=0, 
                     upBound=1, 
                     cat='Binary'
                 )
                 valid_pairs.append((c_item, s_item))
+                
+                # Calculate and store weight for debug
+                weight = weight_fn(c_item, s_item)
+                debug_info["pair_weights"][(c_id, s_id)] = weight
+                debug_info["valid_pairs"].append({
+                    "content": c_id,
+                    "shape": s_id,
+                    "weight": weight
+                })
+            else:
+                # Store incompatibility reason for debug
+                reason = _get_incompatibility_reason(c_item, s_item)
+                debug_info["incompatibility_reasons"][(c_id, s_id)] = reason
     
     if not x_vars:
         logger.warning("No compatible content-shape pairs found")
+        if debug:
+            debug_info["status"] = "No compatible pairs"
+            if any(c.get('required', False) for c in content_items):
+                raise SolverInfeasibleError(
+                    "Required content has no compatible shapes",
+                    debug_info
+                )
+            return {}, debug_info
         return {}
     
     # Objective function: maximize total weight
@@ -68,39 +139,66 @@ def solve_assignment(
     
     # Constraint 1: Each content item assigned to at most one shape
     for c_item in content_items:
+        c_id = c_item['id']
         constraint = pulp.lpSum(
-            x_vars[(c_item['id'], s_item['sid'])]
-            for s_item in shape_items
-            if (c_item['id'], s_item['sid']) in x_vars
+            x_vars[(c_id, s_id)]
+            for s_id in [s['sid'] for s in shape_items]
+            if (c_id, s_id) in x_vars
         )
+        constraint_name = f"Content_{c_id}_constraint"
+        
         if c_item.get('required', False):
             # Required content must be assigned
-            prob += constraint == 1, f"Content_{c_item['id']}_required"
+            prob += constraint == 1, constraint_name
         else:
             # Optional content may or may not be assigned
-            prob += constraint <= 1, f"Content_{c_item['id']}_optional"
+            prob += constraint <= 1, constraint_name
     
     # Constraint 2: Each shape assigned to at most one content item
     for s_item in shape_items:
+        s_id = s_item['sid']
         constraint = pulp.lpSum(
-            x_vars[(c_item['id'], s_item['sid'])]
-            for c_item in content_items
-            if (c_item['id'], s_item['sid']) in x_vars
+            x_vars[(c_id, s_id)]
+            for c_id in [c['id'] for c in content_items]
+            if (c_id, s_id) in x_vars
         )
-        prob += constraint <= 1, f"Shape_{s_item['sid']}_unique"
+        # Ensure unique constraint names
+        constraint_name = f"Shape_{s_id}_unique"
+        prob += constraint <= 1, constraint_name
     
     # Solve the problem
     try:
         solver = pulp.PULP_CBC_CMD(msg=msg, timeLimit=timeout)
         status = prob.solve(solver)
         
+        debug_info["status"] = pulp.LpStatus[status]
+        debug_info["objective_value"] = pulp.value(prob.objective) or 0.0
+        
+        # Find binding constraints
+        for name, constraint in prob.constraints.items():
+            if constraint.value() is not None:
+                slack = abs(constraint.value())
+                if slack < 1e-6:  # Essentially at equality
+                    debug_info["binding_constraints"].append(name)
+        
         if status != pulp.LpStatusOptimal:
             logger.warning(f"ILP solver returned non-optimal status: {pulp.LpStatus[status]}")
             if status == pulp.LpStatusInfeasible:
                 logger.error("Problem is infeasible - check constraints")
-                return {}
+                if debug:
+                    raise SolverInfeasibleError(
+                        "ILP problem is infeasible",
+                        debug_info
+                    )
+                return {} if not debug else ({}, debug_info)
+    except SolverInfeasibleError:
+        # Re-raise our custom exception
+        raise
     except Exception as e:
         logger.error(f"ILP solver failed: {e}")
+        if debug:
+            debug_info["status"] = f"Error: {str(e)}"
+            return {}, debug_info
         return {}
     
     # Extract the solution
@@ -118,7 +216,49 @@ def solve_assignment(
             logger.debug(f"Mapped {c_id} -> {s_id} (weight: {weight:.2f})")
     
     logger.info(f"ILP solver found mapping with total weight: {total_weight:.2f}")
+    
+    if debug:
+        return mapping, debug_info
     return mapping
+
+
+def _get_incompatibility_reason(content: Dict[str, Any], shape: Dict[str, Any]) -> str:
+    """Get human-readable reason for incompatibility"""
+    if not shape.get('place_ok', True):
+        return f"Shape marked as not placeable (place_ok=False)"
+    
+    content_type = content.get('type', 'UNKNOWN')
+    shape_type = shape.get('ph_type', 'UNKNOWN')
+    
+    if content_type == 'CHART' and shape_type not in ['CHART', 'BODY', 'TEXTBOX', 'PICTURE', 'OBJECT']:
+        return f"CHART content incompatible with {shape_type} placeholder"
+    elif content_type == 'TABLE' and shape_type not in ['TABLE', 'BODY', 'TEXTBOX', 'OBJECT']:
+        return f"TABLE content incompatible with {shape_type} placeholder"
+    elif content_type == 'IMAGE' and shape_type not in ['PICTURE', 'BODY', 'TEXTBOX', 'OBJECT']:
+        return f"IMAGE content incompatible with {shape_type} placeholder"
+    
+    return f"Type mismatch: {content_type} -> {shape_type}"
+
+
+def solve_assignment_simple(
+    content_items: List[Dict[str, Any]],
+    shape_items: List[Dict[str, Any]],
+    weight_fn: Callable[[Dict, Dict], float],
+    compat_fn: Callable[[Dict, Dict], bool],
+    timeout: int = 10,
+    msg: bool = False
+) -> Dict[str, str]:
+    """
+    Backward-compatible wrapper for solve_assignment
+    Always returns just the mapping dictionary
+    """
+    result = solve_assignment(
+        content_items, shape_items, weight_fn, compat_fn, 
+        timeout, msg, debug=False
+    )
+    if isinstance(result, tuple):
+        return result[0]
+    return result
 
 
 def default_weight_fn(
@@ -401,7 +541,7 @@ def choose_layout_and_mapping(
         shape_items = []
         for shape in shapes:
             shape_item = {
-                'sid': shape.get('id') or shape.get('shape_id'),
+                'sid': shape.get('sid') or shape.get('id') or shape.get('shape_id'),
                 'ph_type': shape.get('ph_type'),
                 'role': shape.get('role'),
                 'vision_role': shape.get('vision_role'),
@@ -413,8 +553,8 @@ def choose_layout_and_mapping(
                 'priority': shape.get('priority', 5),
                 'tags': shape.get('tags', []),
                 'archetype_hint': layout.get('archetype_hint'),
-                'slide_width': layout.get('slide_width', 1920),
-                'slide_height': layout.get('slide_height', 1080)
+                'slide_width': shape.get('slide_width', 1920),
+                'slide_height': shape.get('slide_height', 1080)
             }
             shape_items.append(shape_item)
         

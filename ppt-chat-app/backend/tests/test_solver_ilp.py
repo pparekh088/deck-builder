@@ -126,9 +126,11 @@ class TestILPSolver:
                 "layout_id": 0,
                 "shapes": [
                     {"sid": "s1", "ph_type": "TITLE", "place_ok": True,
-                     "bbox_px": {"left": 100, "top": 100, "width": 800, "height": 100}},
+                     "bbox_px": {"left": 100, "top": 100, "width": 800, "height": 100},
+                     "slide_width": 1920, "slide_height": 1080},
                     {"sid": "s2", "ph_type": "SUBTITLE", "place_ok": True,
-                     "bbox_px": {"left": 100, "top": 300, "width": 800, "height": 100}}
+                     "bbox_px": {"left": 100, "top": 300, "width": 800, "height": 100},
+                     "slide_width": 1920, "slide_height": 1080}
                 ]
             },
             {
@@ -136,9 +138,11 @@ class TestILPSolver:
                 "layout_id": 1,
                 "shapes": [
                     {"sid": "s3", "ph_type": "TITLE", "place_ok": True,
-                     "bbox_px": {"left": 100, "top": 50, "width": 800, "height": 80}},
+                     "bbox_px": {"left": 100, "top": 50, "width": 800, "height": 80},
+                     "slide_width": 1920, "slide_height": 1080},
                     {"sid": "s4", "ph_type": "BODY", "place_ok": True,
-                     "bbox_px": {"left": 100, "top": 200, "width": 800, "height": 400}}
+                     "bbox_px": {"left": 100, "top": 200, "width": 800, "height": 400},
+                     "slide_width": 1920, "slide_height": 1080}
                 ]
             }
         ]
