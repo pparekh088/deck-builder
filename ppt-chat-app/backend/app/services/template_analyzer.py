@@ -11,11 +11,22 @@ import logging
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import colorsys
+import numpy as np
 
 from app.models import (
     TemplateProfile, SlideLayoutSignature, PlaceholderInfo,
     PlaceholderType, ThemeInfo, BrandAsset
 )
+
+# Import new analysis modules
+from ..analysis.archetypes import (
+    nearest_archetype, shape_from_dict, ShapeSig, align_to_archetype
+)
+from ..analysis.safety_map import (
+    make_safety_mask, compute_shape_safety_scores, encode_mask_to_string
+)
+from ..utils.geometry import emu_to_px
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +102,24 @@ class TemplateAnalyzer:
         """Extract all slide layouts and their placeholders"""
         layouts = []
         
+        # Get slide dimensions for normalization
+        slide_width_emu = presentation.slide_width
+        slide_height_emu = presentation.slide_height
+        slide_width_px = emu_to_px(slide_width_emu, settings.VISION_IMAGE_DPI)
+        slide_height_px = emu_to_px(slide_height_emu, settings.VISION_IMAGE_DPI)
+        
         for idx, layout in enumerate(presentation.slide_layouts):
             placeholders = []
+            shape_sigs = []  # For archetype detection
             
             for placeholder in layout.placeholders:
                 placeholder_type = self._get_placeholder_type(placeholder)
                 
                 # Get dimensions if available
                 width = height = left = top = None
+                bbox_norm = None
+                bbox_px = None
+                
                 try:
                     if hasattr(placeholder, 'width'):
                         width = placeholder.width / Inches(1)
@@ -108,6 +129,30 @@ class TemplateAnalyzer:
                         left = placeholder.left / Inches(1)
                     if hasattr(placeholder, 'top'):
                         top = placeholder.top / Inches(1)
+                    
+                    # Compute normalized bbox (0..1)
+                    if all(v is not None for v in [left, top, width, height]):
+                        left_norm = placeholder.left / slide_width_emu
+                        top_norm = placeholder.top / slide_height_emu
+                        width_norm = placeholder.width / slide_width_emu
+                        height_norm = placeholder.height / slide_height_emu
+                        bbox_norm = (left_norm, top_norm, width_norm, height_norm)
+                        
+                        # Also compute pixel bbox
+                        bbox_px = {
+                            "left": emu_to_px(placeholder.left, settings.VISION_IMAGE_DPI),
+                            "top": emu_to_px(placeholder.top, settings.VISION_IMAGE_DPI),
+                            "width": emu_to_px(placeholder.width, settings.VISION_IMAGE_DPI),
+                            "height": emu_to_px(placeholder.height, settings.VISION_IMAGE_DPI)
+                        }
+                        
+                        # Create shape signature for archetype detection
+                        shape_sig = ShapeSig(
+                            kind=placeholder_type.value,  # Convert enum to string
+                            role=placeholder.name,
+                            bbox_norm=bbox_norm
+                        )
+                        shape_sigs.append(shape_sig)
                 except:
                     pass
                 
@@ -118,20 +163,31 @@ class TemplateAnalyzer:
                     width=width,
                     height=height,
                     left=left,
-                    top=top
+                    top=top,
+                    bbox_norm=bbox_norm,  # Add normalized bbox
+                    bbox_px=bbox_px  # Add pixel bbox
                 )
                 placeholders.append(placeholder_info)
+            
+            # Detect archetype if enabled
+            archetype_hint = None
+            if settings.ARCHETYPE_ALIGNMENT_ENABLED and shape_sigs:
+                archetype_hint = nearest_archetype(shape_sigs)
+                logger.debug(f"Layout {idx} detected archetype: {archetype_hint}")
             
             # Create layout signature
             layout_sig = SlideLayoutSignature(
                 layout_id=idx,
                 name=layout.name,
                 placeholders=placeholders,
-                notes=self._get_layout_description(layout.name, placeholders)
+                notes=self._get_layout_description(layout.name, placeholders),
+                archetype_hint=archetype_hint,  # Add archetype
+                slide_width=slide_width_px,
+                slide_height=slide_height_px
             )
             layouts.append(layout_sig)
             
-            logger.debug(f"Layout {idx} '{layout.name}': {len(placeholders)} placeholders")
+            logger.debug(f"Layout {idx} '{layout.name}': {len(placeholders)} placeholders, archetype: {archetype_hint}")
         
         return layouts
     

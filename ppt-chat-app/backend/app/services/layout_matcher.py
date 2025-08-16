@@ -1,7 +1,6 @@
 """
 Layout Matcher Service
-Matches slide specifications to the best available template layouts using scoring algorithms
-Enhanced with vision-based labeling for improved accuracy
+Matches slide specifications to optimal template layouts
 """
 
 import logging
@@ -10,9 +9,13 @@ from dataclasses import dataclass
 
 from app.models import (
     SlideSpec, SlideLayoutSignature, TemplateProfile,
-    SlideMapping, PlaceholderType
+    SlideMapping, PlaceholderType, PlaceholderInfo
 )
 from app.models.vision import VisionRole
+
+# Import ILP solver
+from .solver_ilp import choose_layout_and_mapping
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +557,218 @@ class LayoutMatcher:
             penalty = min(penalty, 0.3)  # Cap at 30% penalty
         
         return penalty
+
+    def match_slide_to_layout(
+        self,
+        slide: SlideSpec,
+        template_profile: TemplateProfile
+    ) -> SlideMapping:
+        """
+        Match a slide specification to the best available layout
+        Uses ILP solver if enabled, otherwise falls back to greedy scoring
+        
+        Args:
+            slide: Slide specification to match
+            template_profile: Available template layouts
+            
+        Returns:
+            SlideMapping with the best layout and placement info
+        """
+        # Use ILP solver if enabled
+        if settings.ACCURATE_SOLVER_ENABLED:
+            return self._match_with_ilp_solver(slide, template_profile)
+        
+        # Otherwise use original greedy scoring
+        return self._match_with_greedy_scoring(slide, template_profile)
+    
+    def _match_with_ilp_solver(
+        self,
+        slide: SlideSpec,
+        template_profile: TemplateProfile
+    ) -> SlideMapping:
+        """Match using ILP solver for optimal content placement"""
+        
+        # Prepare content items from slide spec
+        content_items = []
+        
+        # Add title
+        if slide.title:
+            content_items.append({
+                "id": "title",
+                "type": "TITLE",
+                "text": slide.title,
+                "required": True,
+                "size_hint": "S"
+            })
+        
+        # Add subtitle if present
+        if hasattr(slide, 'subtitle') and slide.subtitle:
+            content_items.append({
+                "id": "subtitle",
+                "type": "SUBTITLE",
+                "text": slide.subtitle,
+                "required": False,
+                "size_hint": "S"
+            })
+        
+        # Add bullets as body content
+        if slide.bullets:
+            content_items.append({
+                "id": "body",
+                "type": "BODY",
+                "text": "\n".join(f"• {b}" for b in slide.bullets),
+                "required": True,
+                "size_hint": self._estimate_content_size(slide.bullets)
+            })
+        
+        # Add charts/tables/images if present
+        if slide.needs.has_chart:
+            content_items.append({
+                "id": "chart",
+                "type": "CHART",
+                "required": True,
+                "size_hint": "L"
+            })
+        
+        if slide.needs.has_table:
+            content_items.append({
+                "id": "table",
+                "type": "TABLE",
+                "required": True,
+                "size_hint": "L"
+            })
+        
+        if slide.needs.has_picture:
+            content_items.append({
+                "id": "image",
+                "type": "IMAGE",
+                "required": True,
+                "size_hint": "M"
+            })
+        
+        # Prepare layouts with shape information
+        layouts_for_solver = []
+        for layout in template_profile.layout_catalog:
+            layout_dict = {
+                "name": layout.name,
+                "layout_id": layout.layout_id,
+                "archetype_hint": getattr(layout, 'archetype_hint', None),
+                "slide_width": getattr(layout, 'slide_width', 1920),
+                "slide_height": getattr(layout, 'slide_height', 1080),
+                "shapes": []
+            }
+            
+            for placeholder in layout.placeholders:
+                shape = {
+                    "id": f"shape_{placeholder.idx}",
+                    "ph_type": placeholder.type.value if hasattr(placeholder.type, 'value') else str(placeholder.type),
+                    "role": placeholder.name,
+                    "bbox_px": getattr(placeholder, 'bbox_px', None),
+                    "bbox_norm": getattr(placeholder, 'bbox_norm', None),
+                    "place_ok": getattr(placeholder, 'place_ok', True),
+                    "safety_penalty": getattr(placeholder, 'safety_penalty', 0.0),
+                    "priority": 5,  # Default priority
+                    "tags": []  # Could be populated from template metadata
+                }
+                
+                # Add vision role if available
+                if hasattr(placeholder, 'vision') and placeholder.vision:
+                    shape["vision_role"] = placeholder.vision.role
+                    shape["place_content"] = placeholder.vision.place_content
+                    shape["priority"] = placeholder.vision.priority
+                
+                layout_dict["shapes"].append(shape)
+            
+            layouts_for_solver.append(layout_dict)
+        
+        # Use ILP solver to find optimal layout and mapping
+        best_layout, mapping = choose_layout_and_mapping(
+            layouts_for_solver,
+            content_items,
+            config={
+                "timeout": settings.SOLVER_TIMEOUT,
+                "msg": settings.SOLVER_MSG
+            }
+        )
+        
+        if not best_layout:
+            # Fallback to greedy if solver fails
+            logger.warning("ILP solver failed, falling back to greedy matching")
+            return self._match_with_greedy_scoring(slide, template_profile)
+        
+        # Create SlideMapping from solver result
+        adaptations = []
+        
+        # Check for unmapped required content
+        for content in content_items:
+            if content["required"] and content["id"] not in mapping:
+                adaptations.append(f"Could not place {content['type']}: {content['id']}")
+        
+        # Calculate confidence based on mapping coverage
+        mapped_count = len(mapping)
+        total_count = len(content_items)
+        confidence = (mapped_count / total_count) if total_count > 0 else 0.0
+        
+        return SlideMapping(
+            slide_spec_id=slide.slide_id,
+            layout_id=best_layout["layout_id"],
+            layout_name=best_layout["name"],
+            confidence_score=confidence,
+            adaptations_needed=adaptations,
+            content_mapping=mapping  # Store the actual mapping
+        )
+    
+    def _estimate_content_size(self, bullets: List[str]) -> str:
+        """Estimate content size hint based on bullet count and length"""
+        if not bullets:
+            return "XS"
+        
+        total_chars = sum(len(b) for b in bullets)
+        bullet_count = len(bullets)
+        
+        if bullet_count <= 2 and total_chars < 100:
+            return "S"
+        elif bullet_count <= 4 and total_chars < 200:
+            return "M"
+        elif bullet_count <= 6 and total_chars < 400:
+            return "L"
+        else:
+            return "XL"
+    
+    def _match_with_greedy_scoring(
+        self,
+        slide: SlideSpec,
+        template_profile: TemplateProfile
+    ) -> SlideMapping:
+        """Original greedy scoring method"""
+        scores = []
+        
+        for layout in template_profile.layout_catalog:
+            score = self._score_layout(slide, layout)
+            scores.append(score)
+        
+        # Sort by total score (highest first)
+        scores.sort(key=lambda x: x.total_score, reverse=True)
+        
+        if not scores:
+            # Fallback to first layout if no matches
+            return SlideMapping(
+                slide_spec_id=slide.slide_id,
+                layout_id=0,
+                layout_name="Default",
+                confidence_score=0.0,
+                adaptations_needed=["No suitable layout found"]
+            )
+        
+        best_score = scores[0]
+        
+        return SlideMapping(
+            slide_spec_id=slide.slide_id,
+            layout_id=best_score.layout_id,
+            layout_name=best_score.layout_name,
+            confidence_score=best_score.total_score,
+            adaptations_needed=best_score.adaptations_needed
+        )
 
 # Create singleton instance
 layout_matcher = LayoutMatcher()

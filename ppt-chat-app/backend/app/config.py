@@ -17,6 +17,22 @@ class Settings(BaseSettings):
     VISION_IMAGE_DPI: int = 192
     LIBREOFFICE_PATH: str = "soffice"
     
+    # Accuracy++ Features
+    ACCURATE_SOLVER_ENABLED: bool = True
+    RENDER_MEASURE_ENABLED: bool = True
+    ARCHETYPE_ALIGNMENT_ENABLED: bool = True
+    SAFETY_MAP_ENABLED: bool = True
+    
+    # Rendering Configuration
+    PDF_RASTER_DPI: int = 192
+    MIN_FONT_SIZE: int = 10  # Minimum font size for overflow fixes
+    MAX_FONT_SIZE: int = 44  # Maximum font size for overflow fixes
+    OVERFLOW_THRESHOLD: float = 0.1  # Threshold for detecting overflow
+    
+    # Solver Configuration
+    SOLVER_TIMEOUT: int = 10  # Timeout in seconds for ILP solver
+    SOLVER_MSG: bool = False  # Show solver messages
+    
     # Application Settings
     secret_key: str = "your-secret-key-here"
     algorithm: str = "HS256"

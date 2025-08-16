@@ -316,6 +316,12 @@ class VisionLabeler:
         Returns:
             Updated template profile
         """
+        # Import safety map functions
+        from ..analysis.safety_map import (
+            make_safety_mask, compute_shape_safety_scores, encode_mask_to_string
+        )
+        from ..config import settings
+        
         # Create mapping of labels by layout
         labels_map = {}
         for layout_labels in all_labels:
@@ -335,17 +341,64 @@ class VisionLabeler:
                 # Map labels to placeholders
                 label_dict = {label.shape_id: label for label in layout_labels.labels}
                 
+                # Prepare labels for safety map generation
+                safety_labels = []
+                
                 for placeholder in layout.placeholders:
                     total_shapes += 1
                     shape_id = f"shape_{placeholder.idx}"
                     
                     if shape_id in label_dict:
-                        placeholder.vision = label_dict[shape_id]
+                        label = label_dict[shape_id]
+                        placeholder.vision = label
                         labeled_shapes += 1
+                        
+                        # Prepare label for safety map
+                        if placeholder.bbox_px:
+                            safety_label = {
+                                "shape_id": shape_id,
+                                "role": label.role,
+                                "place_content": label.place_content,
+                                "bbox_px": placeholder.bbox_px
+                            }
+                            safety_labels.append(safety_label)
+                
+                # Generate safety mask if enabled
+                if settings.SAFETY_MAP_ENABLED and safety_labels:
+                    # Get layout dimensions
+                    slide_width = layout.slide_width or 1920
+                    slide_height = layout.slide_height or 1080
+                    
+                    # Create safety mask
+                    safety_mask = make_safety_mask(
+                        None,  # No image needed for basic mask
+                        safety_labels,
+                        int(slide_width),
+                        int(slide_height)
+                    )
+                    
+                    # Encode mask for storage
+                    layout.safety_mask = encode_mask_to_string(safety_mask)
+                    
+                    # Compute safety penalties for each shape
+                    shapes_with_safety = compute_shape_safety_scores(
+                        [{"id": p.idx, "bbox_px": p.bbox_px} for p in layout.placeholders if p.bbox_px],
+                        safety_mask
+                    )
+                    
+                    # Update placeholders with safety penalties
+                    for shape_info in shapes_with_safety:
+                        placeholder = next((p for p in layout.placeholders if p.idx == shape_info["id"]), None)
+                        if placeholder:
+                            placeholder.safety_penalty = shape_info.get("safety_penalty", 0.0)
+                            placeholder.place_ok = shape_info.get("place_ok", True)
+                    
+                    logger.debug(f"Generated safety map for layout {layout_idx}")
         
         # Update profile metadata
         profile.vision_enabled = True
         profile.vision_coverage = (labeled_shapes / total_shapes * 100) if total_shapes > 0 else 0
+        profile.safety_maps_enabled = settings.SAFETY_MAP_ENABLED
         
         logger.info(f"Vision labeling complete: {labeled_shapes}/{total_shapes} shapes labeled "
                    f"({profile.vision_coverage:.1f}% coverage)")

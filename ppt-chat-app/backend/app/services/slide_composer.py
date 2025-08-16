@@ -1,6 +1,6 @@
 """
 Slide Composer Service
-Composes slides by filling template placeholders with content based on layout mappings
+Assembles slides from content and templates
 """
 
 import logging
@@ -19,6 +19,10 @@ from app.models import (
     PlaceholderType, PlaceholderInfo, ThemeInfo
 )
 
+# Import render measure service
+from .render_measure import create_render_measure_service
+from ..config import settings
+
 logger = logging.getLogger(__name__)
 
 class SlideComposer:
@@ -31,21 +35,21 @@ class SlideComposer:
     
     def compose_presentation(
         self,
-        template_path: Path,
-        output_path: Path,
         slides: List[SlideSpec],
         mappings: List[SlideMapping],
-        template_profile: TemplateProfile
+        template_profile: TemplateProfile,
+        template_path: Path,
+        output_path: Path
     ) -> List[SlideComposition]:
         """
-        Compose a complete presentation
+        Compose a complete presentation from slide specifications
         
         Args:
-            template_path: Path to template file
-            output_path: Path for output file
             slides: List of slide specifications
-            mappings: Layout mappings for each slide
-            template_profile: Template profile with theme info
+            mappings: Corresponding layout mappings
+            template_profile: Template profile with layout info
+            template_path: Path to template file
+            output_path: Path to save output presentation
             
         Returns:
             List of SlideComposition results
@@ -61,13 +65,63 @@ class SlideComposer:
                 del prs.slides._slideLayouts._slideLayouts[rId]
             
             compositions = []
+            placements = []  # Track placements for 3-pass render
+            slide_index_map = {}  # Map slide indices to metadata
             
             # Create slides based on mappings
-            for slide_spec, mapping in zip(slides, mappings):
+            for idx, (slide_spec, mapping) in enumerate(zip(slides, mappings)):
                 composition = self._compose_slide(
                     prs, slide_spec, mapping, template_profile
                 )
                 compositions.append(composition)
+                
+                # Track placement info for measurement
+                if composition.success:
+                    # Get content mapping if available
+                    content_mapping = getattr(mapping, 'content_mapping', {})
+                    
+                    for content_id, shape_id in content_mapping.items():
+                        placements.append({
+                            "slide_index": idx,
+                            "content_id": content_id,
+                            "shape_id": shape_id,
+                            "slide_spec_id": slide_spec.slide_id
+                        })
+                    
+                    slide_index_map[idx] = {
+                        "slide_spec_id": slide_spec.slide_id,
+                        "layout_id": mapping.layout_id,
+                        "layout_name": mapping.layout_name
+                    }
+            
+            # Perform 3-pass rendering if enabled
+            if settings.RENDER_MEASURE_ENABLED and placements:
+                logger.info("Starting 3-pass render with measurement")
+                render_service = create_render_measure_service()
+                render_report = render_service.three_pass_render(
+                    prs,
+                    placements,
+                    slide_index_map,
+                    output_path=None  # Will save at the end
+                )
+                
+                # Update compositions with render corrections
+                if render_report.get("status") == "success":
+                    corrections = render_report.get("corrections", [])
+                    for correction in corrections:
+                        slide_idx = correction.get("slide_index")
+                        if 0 <= slide_idx < len(compositions):
+                            comp = compositions[slide_idx]
+                            if correction["type"] == "font_resize":
+                                comp.issues.append(
+                                    f"Font reduced from {correction['old_size']} to {correction['new_size']}pt"
+                                )
+                            elif correction["type"] == "slide_split":
+                                comp.issues.append(
+                                    f"Content split to continuation slide {correction['continuation_slide']}"
+                                )
+                    
+                    logger.info(f"3-pass render complete: {len(corrections)} corrections made")
             
             # Save presentation
             prs.save(str(output_path))
