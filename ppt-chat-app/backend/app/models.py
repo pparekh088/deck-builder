@@ -27,6 +27,9 @@ class ChatResponse(BaseModel):
     session_id: str
     preview_available: bool = False
     preview_url: Optional[str] = None
+    # New fields for accuracy validation (non-breaking additions)
+    placements: Optional[List[Dict[str, Any]]] = None
+    render_metrics: Optional[Dict[str, Any]] = None
 
 class TemplateUploadResponse(BaseModel):
     success: bool

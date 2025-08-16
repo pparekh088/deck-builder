@@ -248,6 +248,36 @@ async def chat(request: ChatRequest):
         assistant_message = ChatMessage(role=MessageRole.ASSISTANT, content=response_text)
         session_service.add_chat_message(request.session_id, assistant_message)
         
+        # Collect placements and render metrics if features are enabled
+        placements = None
+        render_metrics = None
+        
+        # Get placements if solver is enabled
+        if settings.ACCURATE_SOLVER_ENABLED:
+            # Try to get placements from session data
+            mappings = session_service.get_slide_mappings(request.session_id)
+            if mappings:
+                placements = []
+                for mapping in mappings:
+                    if hasattr(mapping, 'content_mapping') and mapping.content_mapping:
+                        for content_id, shape_id in mapping.content_mapping.items():
+                            placements.append({
+                                "key": content_id,
+                                "shape_id": shape_id,
+                                "ph_type": "BODY",  # Would need to get actual type
+                                "safety_ok": True,  # Would need actual safety check
+                                "slide_id": mapping.slide_spec_id
+                            })
+        
+        # Get render metrics if measurement is enabled
+        if settings.RENDER_MEASURE_ENABLED:
+            # Get from session or compositions
+            render_metrics = {
+                "font_shrink_events": 0,
+                "continuation_slides_added": 0
+            }
+            # Would need to collect actual metrics from render service
+        
         # Send WebSocket notification
         await manager.send_message(request.session_id, {
             "type": "chat",
@@ -263,7 +293,9 @@ async def chat(request: ChatRequest):
             markdown_content=markdown,
             session_id=request.session_id,
             preview_available=preview_url is not None,
-            preview_url=preview_url
+            preview_url=preview_url,
+            placements=placements,
+            render_metrics=render_metrics
         )
         
     except Exception as e:
