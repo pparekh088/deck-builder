@@ -1,0 +1,33 @@
+version: "3.8"
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server","--appendonly","no"]
+    
+  backend:
+    build: ./backend
+    env_file:
+      - .env.e2e
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - HYBRID_VISION_ENABLED=${HYBRID_VISION_ENABLED:-true}
+      - ACCURATE_SOLVER_ENABLED=${ACCURATE_SOLVER_ENABLED:-true}
+      - RENDER_MEASURE_ENABLED=${RENDER_MEASURE_ENABLED:-true}
+      - ARCHETYPE_ALIGNMENT_ENABLED=${ARCHETYPE_ALIGNMENT_ENABLED:-true}
+      - SAFETY_MAP_ENABLED=${SAFETY_MAP_ENABLED:-true}
+      - VISION_MODEL=${VISION_MODEL:-gpt-4o-mini}
+      - LIBREOFFICE_PATH=${LIBREOFFICE_PATH:-soffice}
+    depends_on: [redis]
+    ports: ["8000:8000"]
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    
+  frontend:
+    build: ./frontend
+    env_file:
+      - .env.e2e
+    environment:
+      - VITE_API_BASE=${VITE_API_BASE:-http://localhost:8000}
+    depends_on: [backend]
+    ports: ["5173:5173"]
+    command: ["npm","run","dev","--","--host","0.0.0.0","--port","5173"]
