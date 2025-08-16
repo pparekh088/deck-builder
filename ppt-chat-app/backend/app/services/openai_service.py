@@ -1,5 +1,5 @@
 from openai import AzureOpenAI
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import logging
 from app.config import settings
 from app.models import ChatMessage, MessageRole
@@ -139,6 +139,52 @@ class OpenAIService:
             
         except Exception as e:
             logger.error(f"Error refining content: {str(e)}")
+            raise
+    
+    async def get_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        response_format: Optional[Dict[str, str]] = None
+    ) -> str:
+        """
+        Get a completion from the OpenAI API with optional JSON response format
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens in response
+            response_format: Optional response format (e.g., {"type": "json_object"})
+            
+        Returns:
+            The completion text
+        """
+        try:
+            kwargs = {
+                "model": self.deployment_name,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            
+            # Add response format if specified (for JSON mode)
+            if response_format:
+                # Note: This requires a model that supports JSON mode (e.g., gpt-4-turbo)
+                # If using an older model, we'll handle this gracefully
+                try:
+                    kwargs["response_format"] = response_format
+                except:
+                    # If JSON mode not supported, add instruction to message
+                    if response_format.get("type") == "json_object":
+                        messages[-1]["content"] += "\n\nIMPORTANT: Respond with ONLY valid JSON, no other text."
+            
+            response = self.client.chat.completions.create(**kwargs)
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error getting completion: {str(e)}")
             raise
 
 # Singleton instance

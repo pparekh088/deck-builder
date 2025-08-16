@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     azure_openai_deployment_name: str = "gpt-4-turbo"
     azure_openai_api_version: str = "2024-02-01"
     
+    # Vision Model Configuration
+    HYBRID_VISION_ENABLED: bool = True
+    VISION_PROVIDER: str = "openai"  # openai|azure|stub
+    VISION_MODEL: str = "gpt-4o-mini"  # or azure deployment name for vision
+    VISION_IMAGE_DPI: int = 192
+    LIBREOFFICE_PATH: str = "soffice"
+    
     # Application Settings
     secret_key: str = "your-secret-key-here"
     algorithm: str = "HS256"
