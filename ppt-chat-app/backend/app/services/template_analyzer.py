@@ -45,7 +45,7 @@ class TemplateAnalyzer:
             PP_PLACEHOLDER.HEADER: PlaceholderType.HEADER,
             PP_PLACEHOLDER.DATE: PlaceholderType.DATE,
             PP_PLACEHOLDER.SLIDE_NUMBER: PlaceholderType.SLIDE_NUMBER,
-            PP_PLACEHOLDER.CONTENT: PlaceholderType.CONTENT,
+            # PP_PLACEHOLDER.CONTENT doesn't exist in python-pptx
             PP_PLACEHOLDER.OBJECT: PlaceholderType.CONTENT,  # Generic content
             PP_PLACEHOLDER.MEDIA_CLIP: PlaceholderType.PICTURE,  # Treat as picture
             PP_PLACEHOLDER.VERTICAL_BODY: PlaceholderType.BODY,
@@ -156,10 +156,20 @@ class TemplateAnalyzer:
                 except:
                     pass
                 
+                # Determine orientation for vertical title/body placeholders
+                is_vertical = False
+                try:
+                    if width and height and height > 0 and width / height < 0.4:
+                        # Very tall and narrow placeholder → treat as vertical
+                        is_vertical = True
+                except Exception:
+                    pass
+
                 placeholder_info = PlaceholderInfo(
                     idx=placeholder.placeholder_format.idx,
                     type=placeholder_type,
                     name=placeholder.name,
+                    is_vertical=is_vertical,
                     width=width,
                     height=height,
                     left=left,
@@ -230,22 +240,54 @@ class TemplateAnalyzer:
         theme = ThemeInfo()
         
         try:
-            # Try to extract from the first slide master
-            if presentation.slide_masters:
-                master = presentation.slide_masters[0]
-                
-                # Extract font scheme
-                if hasattr(master, 'theme') and hasattr(master.theme, 'font_scheme'):
-                    font_scheme = master.theme.font_scheme
-                    if hasattr(font_scheme, 'major_font'):
-                        theme.font_scheme['major'] = str(font_scheme.major_font.latin.typeface)
-                    if hasattr(font_scheme, 'minor_font'):
-                        theme.font_scheme['minor'] = str(font_scheme.minor_font.latin.typeface)
-                
-                # Extract color scheme
-                if hasattr(master, 'theme') and hasattr(master.theme, 'color_scheme'):
-                    color_scheme = master.theme.color_scheme
-                    theme.color_scheme = self._extract_color_scheme(color_scheme)
+            # First, try to extract fonts from actual slides (more reliable)
+            title_font = None
+            body_font = None
+            title_size = None
+            body_size = None
+            
+            # Slides collection doesn't support slicing; iterate by index
+            for i in range(min(5, len(presentation.slides))):
+                slide = presentation.slides[i]
+                for shape in slide.shapes:
+                    if hasattr(shape, 'text_frame') and shape.text_frame and shape.text:
+                        for paragraph in shape.text_frame.paragraphs:
+                            if paragraph.text and paragraph.runs:
+                                run = paragraph.runs[0]
+                                if run.font.name:
+                                    # Guess if it's title or body based on size
+                                    if run.font.size and run.font.size.pt > 24:
+                                        title_font = run.font.name
+                                        title_size = int(run.font.size.pt)
+                                    else:
+                                        body_font = run.font.name
+                                        body_size = int(run.font.size.pt) if run.font.size else 18
+                                    
+                if title_font and body_font:
+                    break
+            
+            # Use discovered fonts or fall back to master theme
+            if title_font or body_font:
+                theme.font_scheme['major'] = title_font or body_font or 'Calibri'
+                theme.font_scheme['minor'] = body_font or title_font or 'Calibri'
+                if title_size:
+                    theme.default_font_size = title_size
+            else:
+                # Fall back to master theme
+                master = None
+                if presentation.slide_masters:
+                    master = presentation.slide_masters[0]
+                    # Extract font scheme
+                    if hasattr(master, 'theme') and hasattr(master.theme, 'font_scheme'):
+                        font_scheme = master.theme.font_scheme
+                        if hasattr(font_scheme, 'major_font'):
+                            theme.font_scheme['major'] = str(font_scheme.major_font.latin.typeface)
+                        if hasattr(font_scheme, 'minor_font'):
+                            theme.font_scheme['minor'] = str(font_scheme.minor_font.latin.typeface)
+                    # Extract color scheme
+                    if hasattr(master, 'theme') and hasattr(master.theme, 'color_scheme'):
+                        color_scheme = master.theme.color_scheme
+                        theme.color_scheme = self._extract_color_scheme(color_scheme)
                 
                 # Try to get default font size from title placeholder
                 for layout in presentation.slide_layouts:

@@ -4,14 +4,28 @@ Matches slide specifications to optimal template layouts
 """
 
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass
 
 from app.models import (
     SlideSpec, SlideLayoutSignature, TemplateProfile,
     SlideMapping, PlaceholderType, PlaceholderInfo
 )
-from app.models.vision import VisionRole
+
+if TYPE_CHECKING:
+    from app.vision_models.vision import VisionRole
+else:
+    # Runtime placeholder
+    VisionRole = type('VisionRole', (), {
+        'Title': 'Title',
+        'Subtitle': 'Subtitle', 
+        'Bullets': 'Bullets',
+        'Paragraph': 'Paragraph',
+        'Table': 'Table',
+        'Chart': 'Chart',
+        'HeroImage': 'HeroImage',
+        'SectionHeader': 'SectionHeader'
+    })
 
 # Import ILP solver
 from .solver_ilp import choose_layout_and_mapping
@@ -72,8 +86,8 @@ class LayoutMatcher:
         """
         mappings = []
         
-        for slide in slides:
-            best_match = self.find_best_layout(slide, template_profile)
+        for idx, slide in enumerate(slides):
+            best_match = self.find_best_layout(slide, template_profile, slide_index=idx)
             mappings.append(best_match)
             
             logger.info(f"Slide '{slide.title}' matched to layout '{best_match.layout_name}' "
@@ -84,7 +98,8 @@ class LayoutMatcher:
     def find_best_layout(
         self,
         slide: SlideSpec,
-        template_profile: TemplateProfile
+        template_profile: TemplateProfile,
+        slide_index: int | None = None
     ) -> SlideMapping:
         """
         Find the best matching layout for a single slide
@@ -96,12 +111,41 @@ class LayoutMatcher:
         Returns:
             SlideMapping with the best match
         """
+        # Hard rule for the first slide: prefer a non-vertical title layout
+        if slide_index == 0:
+            preferred_names = ["Title Slide", "TITLE", "Title Only"]
+            # 1) Prefer explicit title-named layouts without vertical title
+            for layout in template_profile.layout_catalog:
+                if layout.name in preferred_names and any(
+                    p.type == PlaceholderType.TITLE and not getattr(p, "is_vertical", False)
+                    for p in layout.placeholders
+                ):
+                    return SlideMapping(
+                        slide_spec_id=slide.slide_id,
+                        layout_id=layout.layout_id,
+                        layout_name=layout.name,
+                        confidence_score=0.99,
+                        adaptations_needed=[]
+                    )
+            # 2) Otherwise, pick the first layout that has a non-vertical title
+            for layout in template_profile.layout_catalog:
+                if any(p.type == PlaceholderType.TITLE and not getattr(p, "is_vertical", False)
+                       for p in layout.placeholders):
+                    return SlideMapping(
+                        slide_spec_id=slide.slide_id,
+                        layout_id=layout.layout_id,
+                        layout_name=layout.name,
+                        confidence_score=0.95,
+                        adaptations_needed=[]
+                    )
+
         scores = []
         
         for layout in template_profile.layout_catalog:
-            score = self._score_layout(slide, layout)
+            score = self._score_layout(slide, layout, slide_index)
             scores.append(score)
         
+        # Sort by total score (highest first)
         # Sort by total score (highest first)
         scores.sort(key=lambda x: x.total_score, reverse=True)
         
@@ -128,7 +172,8 @@ class LayoutMatcher:
     def _score_layout(
         self,
         slide: SlideSpec,
-        layout: SlideLayoutSignature
+        layout: SlideLayoutSignature,
+        slide_index: int | None = None
     ) -> LayoutScore:
         """
         Score how well a layout matches a slide specification
@@ -183,6 +228,16 @@ class LayoutMatcher:
         # Apply penalties for placing in non-content areas
         penalty = self._calculate_placement_penalty(layout)
         total_score *= (1.0 - penalty)
+        
+        # For title slide (index 0), prefer the template's Title Slide layout if available
+        if slide_index == 0:
+            title_like_names = {"Title Slide", "TITLE", "TITLE_AND_BODY", "Title Only"}
+            # Strong boost if layout is explicitly a title slide
+            if layout.name in {"Title Slide", "TITLE"}:
+                total_score *= 1.25
+            # Mild boost for other title-capable layouts
+            elif layout.name in title_like_names:
+                total_score *= 1.10
         
         return LayoutScore(
             layout_id=layout.layout_id,
@@ -248,8 +303,10 @@ class LayoutMatcher:
         
         for placeholder in layout.placeholders:
             if placeholder.vision:
-                role = placeholder.vision.role
-                if placeholder.vision.place_content:
+                v = placeholder.vision
+                role = v.get('role') if isinstance(v, dict) else getattr(v, 'role', None)
+                place_content = v.get('place_content', True) if isinstance(v, dict) else getattr(v, 'place_content', True)
+                if place_content:
                     placeable_count += 1
                     if role not in vision_roles:
                         vision_roles[role] = []
@@ -515,7 +572,9 @@ class LayoutMatcher:
                 scores.append(score)
         
         # Sort by score
-        scores.sort(key=lambda x: x.total_score, reverse=True)
+        # Sort by total score (highest first), with layout_id as tiebreaker (lower is better)
+        # This prefers earlier layouts when scores are similar, as they're usually the main content layouts
+        scores.sort(key=lambda x: (x.total_score, -x.layout_id), reverse=True)
         
         if not scores:
             return None
@@ -546,15 +605,26 @@ class LayoutMatcher:
         non_placeable = 0
         
         for placeholder in layout.placeholders:
-            if placeholder.vision and not placeholder.vision.place_content:
-                non_placeable += 1
-                # Higher penalty for decorative elements
-                if placeholder.vision.role in ['Decor', 'Logo', 'Footer']:
-                    penalty += 0.05
+            # Penalize vertical-oriented title/body placeholders which render text stacked
+            try:
+                if placeholder.is_vertical and placeholder.type in (PlaceholderType.TITLE, PlaceholderType.BODY):
+                    penalty += 0.15
+            except Exception:
+                pass
+            
+            if placeholder.vision:
+                v = placeholder.vision
+                place_content = v.get('place_content', True) if isinstance(v, dict) else getattr(v, 'place_content', True)
+                if not place_content:
+                    non_placeable += 1
+                    # Higher penalty for decorative elements
+                    v_role = v.get('role') if isinstance(v, dict) else getattr(v, 'role', None)
+                    if v_role in ['Decor', 'Logo', 'Footer']:
+                        penalty += 0.05
         
         # Don't penalize too much for brand elements
         if total_shapes > 0:
-            penalty = min(penalty, 0.3)  # Cap at 30% penalty
+            penalty = min(penalty, 0.5)  # Cap at 50% penalty
         
         return penalty
 
@@ -748,7 +818,9 @@ class LayoutMatcher:
             scores.append(score)
         
         # Sort by total score (highest first)
-        scores.sort(key=lambda x: x.total_score, reverse=True)
+        # Sort by total score (highest first), with layout_id as tiebreaker (lower is better)
+        # This prefers earlier layouts when scores are similar, as they're usually the main content layouts
+        scores.sort(key=lambda x: (x.total_score, -x.layout_id), reverse=True)
         
         if not scores:
             # Fallback to first layout if no matches

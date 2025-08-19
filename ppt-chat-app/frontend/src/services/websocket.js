@@ -113,8 +113,15 @@ class WebSocketService {
   handleMessage(message) {
     const { type, data } = message;
     
+    // Debug logging
+    if (type === 'agent_debug') {
+      console.log('WebSocket: Received agent_debug message:', data);
+    }
+    
     // Notify all listeners for this message type
     const listeners = this.listeners.get(type) || [];
+    console.log(`WebSocket: Found ${listeners.length} listeners for type '${type}'`);
+    
     listeners.forEach(callback => {
       try {
         callback(data);

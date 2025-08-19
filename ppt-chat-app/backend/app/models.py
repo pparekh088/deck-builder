@@ -1,10 +1,15 @@
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from datetime import datetime
 from enum import Enum
 
-# Import vision models
-from app.models.vision import ShapeVisionLabel, VisionRole
+# Import vision models only for type checking to avoid circular imports
+if TYPE_CHECKING:
+    from app.vision_models.vision import ShapeVisionLabel, VisionRole
+else:
+    # Runtime placeholders to avoid import errors
+    ShapeVisionLabel = Dict[str, Any]
+    VisionRole = str
 
 class MessageRole(str, Enum):
     USER = "user"
@@ -44,6 +49,8 @@ class SessionInfo(BaseModel):
     template_name: Optional[str] = None
     chat_history: List[ChatMessage] = []
     current_markdown: str = ""
+    # How to compose this session by default: 'edit' or 'replace'
+    composition_mode: str = "replace"
     created_at: datetime = datetime.now()
     updated_at: datetime = datetime.now()
 
@@ -90,18 +97,22 @@ class PlaceholderInfo(BaseModel):
     idx: int  # Placeholder index
     type: PlaceholderType
     name: Optional[str] = None
+    is_vertical: bool = False
     width: Optional[float] = None  # In inches
     height: Optional[float] = None  # In inches
     left: Optional[float] = None  # Position from left in inches
     top: Optional[float] = None  # Position from top in inches
     # Vision-based labeling
-    vision: Optional[ShapeVisionLabel] = None
+    vision: Optional["ShapeVisionLabel"] = None
     # Additional metadata
     alt_text: Optional[str] = None
     tags: List[str] = []  # Designer tags from name/alt_text
     bbox_emu: Optional[Dict[str, int]] = None  # {left, top, width, height} in EMU
     bbox_px: Optional[Dict[str, int]] = None  # {left, top, width, height} in pixels
     z_order: Optional[int] = None  # Z-order for layering
+    # Safety map annotations
+    safety_penalty: float = 0.0
+    place_ok: bool = True
 
 class SlideLayoutSignature(BaseModel):
     """Signature of a slide layout from the template"""
@@ -109,6 +120,8 @@ class SlideLayoutSignature(BaseModel):
     name: str
     placeholders: List[PlaceholderInfo]
     notes: Optional[str] = None
+    # Encoded safety mask for this layout (if generated)
+    safety_mask: Optional[str] = None
     
     def has_placeholder_type(self, placeholder_type: PlaceholderType) -> bool:
         return any(p.type == placeholder_type for p in self.placeholders)
@@ -141,6 +154,8 @@ class TemplateProfile(BaseModel):
     # Vision analysis metadata
     vision_enabled: bool = False
     vision_coverage: float = 0.0  # % of shapes with vision labels
+    # Whether safety maps have been generated and attached
+    safety_maps_enabled: bool = False
     
     def get_layout_by_id(self, layout_id: int) -> Optional[SlideLayoutSignature]:
         return next((l for l in self.layout_catalog if l.layout_id == layout_id), None)
@@ -148,14 +163,17 @@ class TemplateProfile(BaseModel):
     def get_layouts_with_placeholder(self, placeholder_type: PlaceholderType) -> List[SlideLayoutSignature]:
         return [l for l in self.layout_catalog if l.has_placeholder_type(placeholder_type)]
     
-    def get_layouts_with_vision_role(self, role: VisionRole) -> List[SlideLayoutSignature]:
+    def get_layouts_with_vision_role(self, role: "VisionRole") -> List[SlideLayoutSignature]:
         """Get layouts containing shapes with specific vision role"""
         layouts = []
         for layout in self.layout_catalog:
             for placeholder in layout.placeholders:
-                if placeholder.vision and placeholder.vision.role == role:
-                    layouts.append(layout)
-                    break
+                # Handle both dict and object forms
+                if placeholder.vision:
+                    vision_role = placeholder.vision.get('role') if isinstance(placeholder.vision, dict) else getattr(placeholder.vision, 'role', None)
+                    if vision_role == role:
+                        layouts.append(layout)
+                        break
         return layouts
 
 class SlideContentNeeds(BaseModel):

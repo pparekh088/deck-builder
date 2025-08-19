@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-here"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    # Session TTL (seconds) used by session service
+    session_ttl: int = 3600
     
     # Redis Configuration
     redis_url: str = "redis://localhost:6379"
@@ -52,9 +54,19 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     templates_dir: str = "templates"
     
+    # LangSmith Configuration (optional)
+    langsmith_tracing: Optional[str] = None
+    langsmith_endpoint: Optional[str] = None
+    langsmith_api_key: Optional[str] = None
+    langsmith_project: Optional[str] = None
+    
+    # OpenAI Configuration (fallback)
+    openai_api_key: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"  # Ignore extra fields instead of forbidding them
     
     def get_cors_origins(self) -> List[str]:
         """Convert comma-separated CORS origins string to list"""

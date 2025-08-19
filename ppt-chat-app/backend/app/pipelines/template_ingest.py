@@ -228,12 +228,18 @@ class TemplateIngestPipeline:
             redis_client = await self._get_redis()
             cache_key = get_cache_key(template_id, "profile")
             profile_json = profile.model_dump_json()
-            await redis_client.set(cache_key, profile_json)
+            try:
+                await redis_client.set(cache_key, profile_json)
+            except Exception as e:
+                logger.error(f"Redis set failed: {e}. Skipping Redis cache for profile {template_id}")
             
             # Also save to disk as backup
             profile_path = Path(settings.templates_dir) / f"{template_id}_profile.json"
-            with open(profile_path, 'w') as f:
-                f.write(profile_json)
+            try:
+                with open(profile_path, 'w') as f:
+                    f.write(profile_json)
+            except Exception as e:
+                logger.error(f"Disk write failed for profile: {e}")
                 
             logger.info(f"Profile persisted for template {template_id}")
             
@@ -261,7 +267,10 @@ class TemplateIngestPipeline:
             
             redis_client = await self._get_redis()
             cache_key = get_cache_key(template_id, "metadata")
-            await redis_client.set(cache_key, json.dumps(metadata))
+            try:
+                await redis_client.set(cache_key, json.dumps(metadata))
+            except Exception as e:
+                logger.error(f"Redis set failed for metadata: {e}")
             
         except Exception as e:
             logger.error(f"Error saving template file: {str(e)}")
@@ -283,8 +292,10 @@ class TemplateIngestPipeline:
                 
                 # Count by vision role if available
                 if placeholder.vision:
-                    role = placeholder.vision.role
-                    vision_role_counts[role] = vision_role_counts.get(role, 0) + 1
+                    v = placeholder.vision
+                    role = v.get('role') if isinstance(v, dict) else getattr(v, 'role', None)
+                    if role:
+                        vision_role_counts[role] = vision_role_counts.get(role, 0) + 1
         
         return {
             'total_layouts': total_layouts,

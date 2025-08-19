@@ -1,0 +1,221 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+logs/
+backend.log
+backend_test.log
+
+# Node.js (Frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Frontend Build
+dist/
+build/
+.next/
+out/
+
+# Package Lock Files (optional - some prefer to track these)
+# package-lock.json
+# yarn.lock
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+*.tmp
+*.temp
+
+# PowerPoint/Office Files (uploads and temporary)
+uploads/
+*.pptx
+*.ppt
+*.docx
+*.doc
+*.xlsx
+*.xls
+!templates/*.pptx
+!tests/fixtures/*.pptx
+
+# Redis
+dump.rdb
+
+# Database
+*.db
+*.sqlite3
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Cache directories
+.cache/
+.parcel-cache/
+
+# Docker
+.dockerignore
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# Dependency tracking
+.deps_installed
+
+# Local development
+local/
+dev/
+
+# Previews (generated images)
+previews/
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+
+# Configuration overrides
+config.local.py
+settings.local.py
+
+# Profiling
+*.prof
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# pytype
+.pytype/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# mkdocs
+/site
+
+# Sphinx
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Pyflow
+__pypackages__/
+
+# Local Netlify folder
+.netlify
+
+# Sentry
+.sentryclirc
+
+*.env
