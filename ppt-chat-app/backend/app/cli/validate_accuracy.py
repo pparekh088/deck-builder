@@ -37,7 +37,7 @@ def validate_accuracy():
     # Check API availability
     print("\n🔍 Checking API availability...")
     if not wait_for_api():
-        print("❌ API not available at http://localhost:8000")
+        print("❌ API not available at http://localhost:8006")
         print("   Please start the API with: uvicorn app.main:app --reload")
         return 1
     print("✅ API is available")

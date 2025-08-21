@@ -233,9 +233,9 @@ fi
 export PPT_TEMPLATE_PATH="$(pwd)/uploads/templates"
 
 # Start MCP server in HTTP mode
-echo "Starting MCP server on port 8000..."
+echo "Starting MCP server on port 8005..."
 cd ../Office-PowerPoint-MCP-Server
-$PYTHON_CMD ppt_mcp_server.py --transport http --port 8000 > ../ppt-chat-app/backend/mcp_server.log 2>&1 &
+$PYTHON_CMD ppt_mcp_server.py --transport http --port 8005 > ../ppt-chat-app/backend/mcp_server.log 2>&1 &
 MCP_PID=$!
 echo "MCP Server started with PID: $MCP_PID"
 cd ../ppt-chat-app/backend
@@ -243,7 +243,7 @@ cd ../ppt-chat-app/backend
 # Wait for MCP server to be ready
 echo -n "Waiting for MCP server to be ready"
 for i in {1..10}; do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1 || nc -z localhost 8000 2>/dev/null; then
+    if curl -s http://localhost:8005/health > /dev/null 2>&1 || nc -z localhost 8005 2>/dev/null; then
         echo ""
         echo -e "${GREEN}✅ MCP Server is running${NC}"
         break
@@ -261,7 +261,7 @@ done
 # Start backend in background
 echo ""
 echo "Starting backend server..."
-$PYTHON_CMD -m uvicorn app.main:app --reload --port 8001 > backend.log 2>&1 &
+$PYTHON_CMD -m uvicorn app.main:app --reload --port 8006 > backend.log 2>&1 &
 BACKEND_PID=$!
 echo "Backend started with PID: $BACKEND_PID"
 
@@ -300,12 +300,12 @@ echo -e "${BLUE}⏳ Waiting for services to start...${NC}"
 
 # Check if backend is running
 for i in {1..10}; do
-    if curl -s http://localhost:8001/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8006/health > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Backend is running${NC}"
         break
     fi
     if [ $i -eq 10 ]; then
-        echo -e "${RED}❌ Backend failed to start on port 8001. Check backend/backend.log for errors${NC}"
+        echo -e "${RED}❌ Backend failed to start on port 8006. Check backend/backend.log for errors${NC}"
         echo "Last 20 lines of backend log:"
         tail -20 backend/backend.log
     else
@@ -316,12 +316,12 @@ done
 
 # Check if frontend is running
 for i in {1..10}; do
-    if curl -s http://localhost:5174 > /dev/null 2>&1; then
+    if curl -s http://localhost:5155 > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Frontend is running${NC}"
         break
     fi
     if [ $i -eq 10 ]; then
-        echo -e "${RED}❌ Frontend failed to start on port 5174. Check frontend/frontend.log for errors${NC}"
+        echo -e "${RED}❌ Frontend failed to start on port 5155. Check frontend/frontend.log for errors${NC}"
         echo "Last 20 lines of frontend log:"
         tail -20 frontend/frontend.log
     else
@@ -333,7 +333,7 @@ done
 # Check health status
 echo ""
 echo -e "${BLUE}🔍 Checking system health...${NC}"
-health_response=$(curl -s http://localhost:8001/health)
+health_response=$(curl -s http://localhost:8006/health)
 if [ $? -eq 0 ]; then
     health_status=$(echo $health_response | $PYTHON_CMD -c "import sys, json; data=json.load(sys.stdin); print(data.get('status', 'unknown'))" 2>/dev/null)
     
@@ -352,10 +352,10 @@ fi
 echo ""
 echo -e "${GREEN}✨ PowerPoint AI Generator is running!${NC}"
 echo ""
-echo -e "${BLUE}🌐 Access the application at:${NC} http://localhost:5174"
-echo -e "${BLUE}📚 API documentation at:${NC} http://localhost:8001/docs"
-echo -e "${BLUE}🏥 Health status at:${NC} http://localhost:8001/health"
-echo -e "${BLUE}🔌 MCP Server running at:${NC} http://localhost:8000"
+echo -e "${BLUE}🌐 Access the application at:${NC} http://localhost:5155"
+echo -e "${BLUE}📚 API documentation at:${NC} http://localhost:8006/docs"
+echo -e "${BLUE}🏥 Health status at:${NC} http://localhost:8006/health"
+echo -e "${BLUE}🔌 MCP Server running at:${NC} http://localhost:8005"
 echo ""
 echo -e "${BLUE}📋 Process IDs:${NC}"
 echo "   MCP Server: $MCP_PID"

@@ -212,7 +212,7 @@ Tests verify:
 
 ### MCP Server Configuration
 - Transport: HTTP
-- Port: 8000
+- Port: 8005
 - Auto-start on backend launch
 
 ## 8. Verification Checklist
@@ -248,7 +248,7 @@ cd /workspace/ppt-chat-app/backend
 
 # Terminal 2: Start Backend
 cd /workspace/ppt-chat-app/backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8006
 
 # Terminal 3: Start Frontend
 cd /workspace/ppt-chat-app/frontend

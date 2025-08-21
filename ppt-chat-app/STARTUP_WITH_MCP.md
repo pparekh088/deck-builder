@@ -18,7 +18,7 @@ The startup scripts (`start.sh` for Linux/Mac and `start.bat` for Windows) now *
 ✅ Clones from GitHub if needed
 ✅ Installs fastmcp and python-pptx dependencies
 ✅ Sets PPT_TEMPLATE_PATH environment variable
-✅ Starts MCP server on port 8000
+✅ Starts MCP server on port 8005
 ✅ Waits for server to be ready
 ```
 
@@ -27,14 +27,14 @@ The startup scripts (`start.sh` for Linux/Mac and `start.bat` for Windows) now *
 ✅ Creates/activates virtual environment
 ✅ Installs backend dependencies
 ✅ Configures .env if needed
-✅ Starts FastAPI on port 8001
+✅ Starts FastAPI on port 8006
 ✅ Connects to MCP server automatically
 ```
 
 ### 4. Frontend Server Launch
 ```bash
 ✅ Installs npm dependencies
-✅ Starts Vue.js dev server on port 5174
+✅ Starts Vue.js dev server on port 5155
 ```
 
 ## 📋 Service Architecture
@@ -42,19 +42,19 @@ The startup scripts (`start.sh` for Linux/Mac and `start.bat` for Windows) now *
 ```
 ┌─────────────────────────────────────────┐
 │           User Browser                   │
-│         http://localhost:5174            │
+│         http://localhost:5155            │
 └────────────────┬────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────┐
 │         Frontend (Vue.js)                │
-│            Port: 5174                    │
+│            Port: 5155                    │
 └────────────────┬────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────┐
 │        Backend (FastAPI)                 │
-│           Port: 8001                     │
+│           Port: 8006                     │
 │     • API endpoints                      │
 │     • MCP client integration             │
 │     • OpenAI integration                 │
@@ -63,7 +63,7 @@ The startup scripts (`start.sh` for Linux/Mac and `start.bat` for Windows) now *
                  ▼
 ┌─────────────────────────────────────────┐
 │      MCP PowerPoint Server               │
-│           Port: 8000                     │
+│           Port: 8005                     │
 │     • 33 PowerPoint tools                │
 │     • python-pptx operations             │
 │     • AI-powered generation              │
@@ -93,7 +93,7 @@ start.bat
 ✅ Prerequisites check passed
 
 🔌 Starting MCP PowerPoint Server...
-Starting MCP server on port 8000...
+Starting MCP server on port 8005...
 MCP Server started with PID: 12345
 ✅ MCP Server is running
 
@@ -112,10 +112,10 @@ Frontend started with PID: 12347
 
 ✨ PowerPoint AI Generator is running!
 
-🌐 Access the application at: http://localhost:5174
-📚 API documentation at: http://localhost:8001/docs
-🏥 Health status at: http://localhost:8001/health
-🔌 MCP Server running at: http://localhost:8000
+🌐 Access the application at: http://localhost:5155
+📚 API documentation at: http://localhost:8006/docs
+🏥 Health status at: http://localhost:8006/health
+🔌 MCP Server running at: http://localhost:8005
 
 📋 Process IDs:
    MCP Server: 12345
@@ -144,14 +144,14 @@ If you prefer to start services individually:
 ### Terminal 1 - MCP Server:
 ```bash
 cd /workspace/Office-PowerPoint-MCP-Server
-python ppt_mcp_server.py --transport http --port 8000
+python ppt_mcp_server.py --transport http --port 8005
 ```
 
 ### Terminal 2 - Backend:
 ```bash
 cd /workspace/ppt-chat-app/backend
 source venv/bin/activate  # or venv\Scripts\activate on Windows
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --reload --port 8006
 ```
 
 ### Terminal 3 - Frontend:
@@ -164,18 +164,18 @@ npm run dev
 
 ### MCP Server Issues
 - Check `backend/mcp_server.log` for errors
-- Ensure port 8000 is not in use
+- Ensure port 8005 is not in use
 - Verify python-pptx and fastmcp are installed
 
 ### Connection Issues
 - Backend automatically connects to MCP on startup
 - Check `backend/backend.log` for connection errors
-- Verify MCP server is running on port 8000
+- Verify MCP server is running on port 8005
 
 ### Port Conflicts
-- MCP Server: 8000
-- Backend API: 8001  
-- Frontend: 5174
+- MCP Server: 8005
+- Backend API: 8006  
+- Frontend: 5155
 
 Change ports in start scripts if needed.
 

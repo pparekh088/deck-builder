@@ -12,10 +12,10 @@ export PPT_TEMPLATE_PATH="/workspace/ppt-chat-app/backend/uploads/templates"
 cd /workspace/Office-PowerPoint-MCP-Server
 
 # Start the server in HTTP mode
-python ppt_mcp_server.py --transport http --port 8000 &
+python ppt_mcp_server.py --transport http --port 8005 &
 
 # Save the PID for later shutdown
 echo $! > /tmp/mcp_server.pid
 
 echo "MCP Server started with PID $(cat /tmp/mcp_server.pid)"
-echo "Server running on http://localhost:8000"
+echo "Server running on http://localhost:8005"

@@ -23,7 +23,7 @@ class MCPServerConfig:
     """Configuration for MCP Server connection"""
     transport: str = "http"  # "stdio" or "http"
     server_path: str = "/workspace/Office-PowerPoint-MCP-Server/ppt_mcp_server.py"
-    http_port: int = 8000
+    http_port: int = 8005
     http_host: str = "localhost"
 
 class MCPPowerPointClient:
