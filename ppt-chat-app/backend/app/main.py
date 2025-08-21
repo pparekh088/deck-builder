@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 import json
 import asyncio
+import uuid
 from typing import Dict, Optional, List
 from datetime import datetime
 import logging
@@ -18,14 +19,13 @@ from app.models import (
     TemplateProfile, PresentationPlan, SlideMapping, ValidationIssue
 )
 from app.services.openai_service import openai_service
-from app.services.ppt_service import ppt_service
 from app.services.session_service import session_service
 from app.services.template_analyzer import template_analyzer
 from app.services.slide_planner import slide_planner
 from app.services.layout_matcher import layout_matcher
 from app.services.slide_composer import slide_composer
 from app.services.presentation_validator import presentation_validator
-from app.services.mcp_client import mcp_client
+from app.services.mcp import mcp_client
 
 # Import the template routes (disabled for now - missing dependencies)
 # from app.api.routes.template import router as template_router
@@ -107,6 +107,42 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Helper function for markdown parsing
+def _parse_markdown(markdown: str) -> List[dict]:
+    """Parse markdown into slide data structures"""
+    slides = []
+    current_slide = None
+    
+    lines = markdown.strip().split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Check for title (# heading)
+        if line.startswith('# '):
+            if current_slide:
+                slides.append(current_slide)
+            current_slide = {
+                'title': line[2:].strip(),
+                'bullets': []
+            }
+        # Check for bullet points
+        elif (line.startswith('- ') or line.startswith('* ')) and current_slide:
+            current_slide['bullets'].append(line[2:].strip())
+    
+    # Add the last slide
+    if current_slide:
+        slides.append(current_slide)
+    
+    # If no slides were created, create a default one
+    if not slides:
+        slides.append({
+            'title': 'Presentation',
+            'bullets': markdown.split('\n') if markdown else ['Add content here']
+        })
+    
+    return slides
+
 # API Endpoints
 
 @app.get("/")
@@ -137,9 +173,17 @@ async def upload_template(
         raise HTTPException(status_code=400, detail="File must be a PowerPoint file")
     
     try:
-        # Save template
+        # Save template using MCP
         content = await file.read()
-        template_id = ppt_service.save_template(content, file.filename, session_id)
+        template_id = f"{session_id}_{uuid.uuid4().hex[:8]}"
+        template_path = Path(settings.templates_dir) / f"{template_id}.pptx"
+        
+        # Save file to disk
+        with open(template_path, 'wb') as f:
+            f.write(content)
+        
+        # Verify it's valid using MCP
+        await mcp_client.open_presentation(str(template_path))
         
         # Update session
         session_service.set_template(session_id, template_id, file.filename)
@@ -296,13 +340,26 @@ async def chat(request: ChatRequest):
                 session.current_markdown
             )
             
-            # Generate preview
+            # Generate preview using MCP
             if session.template_id and markdown:
-                preview_path = ppt_service.generate_presentation(
-                    markdown,
-                    session.template_id,
-                    request.session_id
-                )
+                template_path = Path(settings.templates_dir) / f"{session.template_id}.pptx"
+                output_path = Path(settings.upload_dir) / f"{request.session_id}_presentation.pptx"
+                
+                # Create presentation using MCP
+                await mcp_client.create_presentation(template_path=str(template_path))
+                
+                # Parse markdown and create slides
+                slides_data = _parse_markdown(markdown)
+                for idx, slide_data in enumerate(slides_data):
+                    await mcp_client.add_slide(layout_index=1)
+                    if slide_data.get('title'):
+                        await mcp_client.populate_placeholder(idx, 0, slide_data['title'])
+                    if slide_data.get('bullets'):
+                        await mcp_client.add_bullet_points(idx, slide_data['bullets'])
+                
+                # Save the presentation
+                await mcp_client.save_presentation(str(output_path))
+                preview_path = str(output_path)
                 preview_url = f"/api/preview/{request.session_id}"
             else:
                 preview_url = None
@@ -474,8 +531,17 @@ async def get_preview(session_id: str):
     if not os.path.exists(preview_path):
         raise HTTPException(status_code=404, detail="Preview not available")
     
-    # Generate preview data
-    slides = ppt_service.parse_markdown_to_slides(session.current_markdown)
+    # Generate preview data using markdown parser
+    slides_data = _parse_markdown(session.current_markdown)
+    slides = []
+    for idx, slide_data in enumerate(slides_data):
+        from app.models import SlidePreview
+        slides.append(SlidePreview(
+            slide_number=idx + 1,
+            title=slide_data.get('title', f'Slide {idx + 1}'),
+            content='\n'.join(slide_data.get('bullets', [])),
+            image_url=None
+        ))
     
     return PresentationPreview(
         session_id=session_id,

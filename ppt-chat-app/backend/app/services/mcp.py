@@ -1,13 +1,194 @@
 """
-Extended MCP Client Service for PowerPoint Server Integration
-Provides access to ALL 33 tools available in the Office-PowerPoint-MCP-Server
+MCP Client Service for PowerPoint Server Integration
+Direct access to ALL 33 tools available in the Office-PowerPoint-MCP-Server
+This is the primary interface for all PowerPoint operations.
 """
 
+import asyncio
+import json
+import logging
+import subprocess
+import sys
+from pathlib import Path
 from typing import Dict, Any, Optional, List
-from app.services.mcp_client import MCPPowerPointClient, MCPServerConfig
+from dataclasses import dataclass
+import httpx
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
-class MCPPowerPointClientExtended(MCPPowerPointClient):
-    """Extended client with access to ALL MCP server tools"""
+logger = logging.getLogger(__name__)
+
+@dataclass
+class MCPServerConfig:
+    """Configuration for MCP Server connection"""
+    transport: str = "http"  # "stdio" or "http"
+    server_path: str = "/workspace/Office-PowerPoint-MCP-Server/ppt_mcp_server.py"
+    http_port: int = 8000
+    http_host: str = "localhost"
+
+class MCPPowerPointClient:
+    """Complete MCP client with access to ALL server tools"""
+    
+    def __init__(self, config: Optional[MCPServerConfig] = None):
+        self.config = config or MCPServerConfig()
+        self.session: Optional[ClientSession] = None
+        self.http_client: Optional[httpx.AsyncClient] = None
+        self.current_presentation_id: Optional[str] = None
+        self._server_process = None
+        
+    async def connect(self):
+        """Connect to the MCP server"""
+        try:
+            if self.config.transport == "stdio":
+                await self._connect_stdio()
+            elif self.config.transport == "http":
+                await self._connect_http()
+            else:
+                raise ValueError(f"Unsupported transport: {self.config.transport}")
+                
+            logger.info(f"Successfully connected to MCP server via {self.config.transport}")
+        except Exception as e:
+            logger.error(f"Failed to connect to MCP server: {e}")
+            raise
+    
+    async def _connect_stdio(self):
+        """Connect to MCP server via stdio"""
+        server_params = StdioServerParameters(
+            command=sys.executable,
+            args=[self.config.server_path]
+        )
+        
+        async with stdio_client(server_params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                self.session = session
+                await session.initialize()
+                logger.info("MCP stdio session initialized")
+    
+    async def _connect_http(self):
+        """Connect to MCP server via HTTP"""
+        await self._start_http_server()
+        
+        self.http_client = httpx.AsyncClient(
+            base_url=f"http://{self.config.http_host}:{self.config.http_port}",
+            timeout=30.0
+        )
+        
+        # Test connection
+        try:
+            response = await self.http_client.get("/health")
+            if response.status_code != 200:
+                raise ConnectionError("Failed to connect to MCP HTTP server")
+        except httpx.ConnectError:
+            logger.warning("Health endpoint not available, server may still be functional")
+    
+    async def _start_http_server(self):
+        """Start the MCP server in HTTP mode"""
+        if self._server_process and self._server_process.poll() is None:
+            logger.info("MCP server already running")
+            return
+            
+        cmd = [
+            sys.executable,
+            self.config.server_path,
+            "--transport", "http",
+            "--port", str(self.config.http_port)
+        ]
+        
+        logger.info(f"Starting MCP server: {' '.join(cmd)}")
+        self._server_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        await asyncio.sleep(2)
+        
+        if self._server_process.poll() is not None:
+            stdout, stderr = self._server_process.communicate()
+            raise RuntimeError(f"MCP server failed to start: {stderr.decode()}")
+    
+    async def disconnect(self):
+        """Disconnect from the MCP server"""
+        try:
+            if self.session:
+                self.session = None
+            
+            if self.http_client:
+                await self.http_client.aclose()
+                self.http_client = None
+            
+            if self._server_process:
+                self._server_process.terminate()
+                self._server_process = None
+                
+            logger.info("Disconnected from MCP server")
+        except Exception as e:
+            logger.error(f"Error disconnecting from MCP server: {e}")
+    
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Call a tool on the MCP server"""
+        try:
+            if self.config.transport == "stdio":
+                return await self._call_tool_stdio(tool_name, arguments)
+            elif self.config.transport == "http":
+                return await self._call_tool_http(tool_name, arguments)
+            else:
+                raise ValueError(f"Unsupported transport: {self.config.transport}")
+        except Exception as e:
+            logger.error(f"Error calling tool {tool_name}: {e}")
+            raise
+    
+    async def _call_tool_stdio(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Call a tool via stdio session"""
+        if not self.session:
+            raise RuntimeError("Not connected to MCP server")
+        
+        result = await self.session.call_tool(tool_name, arguments)
+        return result.content if hasattr(result, 'content') else result
+    
+    async def _call_tool_http(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Call a tool via HTTP"""
+        if not self.http_client:
+            raise RuntimeError("Not connected to MCP server")
+        
+        response = await self.http_client.post(
+            f"/tools/{tool_name}",
+            json=arguments
+        )
+        response.raise_for_status()
+        return response.json()
+    
+    # ========== CORE CONVENIENCE METHODS ==========
+    
+    async def create_presentation(self, template_path: Optional[str] = None, id: Optional[str] = None) -> str:
+        """Create a new PowerPoint presentation"""
+        if template_path:
+            result = await self.create_presentation_from_template(template_path, id)
+        else:
+            args = {}
+            if id:
+                args["id"] = id
+            result = await self.call_tool("create_presentation", args)
+        self.current_presentation_id = result.get("presentation_id")
+        return self.current_presentation_id
+    
+    async def open_presentation(self, file_path: str, id: Optional[str] = None) -> str:
+        """Open an existing PowerPoint presentation"""
+        args = {"file_path": file_path}
+        if id:
+            args["id"] = id
+        result = await self.call_tool("open_presentation", args)
+        self.current_presentation_id = result.get("presentation_id")
+        return self.current_presentation_id
+    
+    async def save_presentation(self, file_path: str, presentation_id: Optional[str] = None) -> Dict[str, Any]:
+        """Save the current presentation"""
+        args = {"file_path": file_path}
+        if presentation_id:
+            args["presentation_id"] = presentation_id
+        elif self.current_presentation_id:
+            args["presentation_id"] = self.current_presentation_id
+        return await self.call_tool("save_presentation", args)
     
     # ========== PRESENTATION TOOLS (7 tools) ==========
     
@@ -441,6 +622,6 @@ class MCPPowerPointClientExtended(MCPPowerPointClient):
         """Call any MCP tool directly by name with keyword arguments"""
         return await self.call_tool(tool_name, kwargs)
 
-# Create extended singleton instances
-mcp_client_extended = MCPPowerPointClientExtended(MCPServerConfig(transport="http"))
-mcp_stdio_client_extended = MCPPowerPointClientExtended(MCPServerConfig(transport="stdio"))
+# Create singleton instances
+mcp_client = MCPPowerPointClient(MCPServerConfig(transport="http"))
+mcp_stdio_client = MCPPowerPointClient(MCPServerConfig(transport="stdio"))
