@@ -10,9 +10,7 @@ from pathlib import Path
 # Add the app directory to the path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.services.mcp_client import mcp_client
-from app.services.ppt_service import ppt_service
-from app.services.simple_slide_tools import simple_slide_tools
+from app.services.mcp import mcp_client
 
 async def test_mcp_connection():
     """Test basic MCP server connection"""
@@ -75,78 +73,40 @@ async def test_save_presentation(presentation_id):
         print(f"✗ Failed to save presentation: {e}")
         return False
 
-async def test_ppt_service():
-    """Test the updated ppt_service with MCP"""
-    print("\nTesting ppt_service integration...")
+async def test_auto_generation():
+    """Test MCP's auto-generation capabilities"""
+    print("\nTesting auto-generation...")
     try:
-        # Test markdown to PPTX conversion
-        markdown = """
-# Introduction
-- Welcome to the presentation
-- This is a test slide
-- Created using MCP server
-
-# Features
-- MCP Server integration
-- Automatic slide generation
-- Template support
-
-# Conclusion
-- Thank you for watching
-- Questions?
-"""
-        output_path, previews = ppt_service.markdown_to_pptx(
-            markdown=markdown,
-            session_id="test_session"
+        # Test AI-powered presentation generation
+        result = await mcp_client.auto_generate_presentation(
+            topic="Future of Artificial Intelligence",
+            num_slides=5,
+            style="professional"
         )
-        print(f"✓ Created presentation from markdown: {output_path}")
-        print(f"✓ Generated {len(previews)} slide previews")
-        return True
-    except Exception as e:
-        print(f"✗ Failed to test ppt_service: {e}")
-        return False
-
-async def test_simple_slide_tools():
-    """Test the updated simple_slide_tools with MCP"""
-    print("\nTesting simple_slide_tools integration...")
-    try:
-        # Create a test presentation
-        template_path = Path("/workspace/ppt-chat-app/backend/uploads/test_template.pptx")
-        output_path = Path("/workspace/ppt-chat-app/backend/uploads/test_tools_output.pptx")
+        print(f"✓ Auto-generated presentation: {result}")
         
-        # First create a simple template if it doesn't exist
-        if not template_path.exists():
-            pres_id = await mcp_client.create_presentation()
-            await mcp_client.add_slide(layout_index=0)  # Title slide
-            await mcp_client.save_presentation(str(template_path), pres_id)
-            print(f"✓ Created template: {template_path}")
-        
-        # Test creating presentation from template
-        result = simple_slide_tools.create_presentation(
-            template_path, output_path, "Create a test presentation"
+        # Apply professional design
+        await mcp_client.apply_professional_design(
+            design_type="gradient",
+            primary_color=[0, 120, 215],
+            secondary_color=[0, 84, 159]
         )
-        print(f"✓ Created presentation: {result}")
+        print("✓ Applied professional design")
         
-        # Test adding a slide
-        result = await simple_slide_tools.add_new_slide(
-            output_path,
-            "New Test Slide",
-            ["Point 1", "Point 2", "Point 3"]
-        )
-        print(f"✓ Added slide: {result}")
+        # Optimize text
+        presentation_info = await mcp_client.get_presentation_info()
+        for i in range(presentation_info.get("slide_count", 0)):
+            await mcp_client.optimize_slide_text(slide_index=i)
+        print("✓ Optimized slide text")
         
-        # Test editing a slide
-        result = simple_slide_tools.edit_slide_content(
-            output_path,
-            slide_number=1,
-            new_title="Updated Title",
-            add_bullets=["Additional point"]
-        )
-        print(f"✓ Edited slide: {result}")
+        # Save the auto-generated presentation
+        output_path = "/workspace/ppt-chat-app/backend/uploads/test_auto_generated.pptx"
+        await mcp_client.save_presentation(output_path)
+        print(f"✓ Saved auto-generated presentation: {output_path}")
         
         return True
     except Exception as e:
-        print(f"✗ Failed to test simple_slide_tools: {e}")
+        print(f"✗ Failed to test auto-generation: {e}")
         return False
 
 async def main():
@@ -171,11 +131,8 @@ async def main():
     else:
         all_passed = False
     
-    # Test service integrations
-    if not await test_ppt_service():
-        all_passed = False
-    
-    if not await test_simple_slide_tools():
+    # Test advanced features
+    if not await test_auto_generation():
         all_passed = False
     
     # Cleanup
