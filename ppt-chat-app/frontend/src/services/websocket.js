@@ -1,6 +1,6 @@
 import { reactive } from 'vue';
 
-const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8001';
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8006';
 
 class WebSocketService {
   constructor() {

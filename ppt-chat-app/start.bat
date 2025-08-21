@@ -120,11 +120,54 @@ if not exist ".env" (
     echo .env file found
 )
 
+:: Start MCP server first
+echo.
+echo Starting MCP PowerPoint Server...
+
+:: Check if MCP server directory exists
+if not exist "..\Office-PowerPoint-MCP-Server" (
+    echo MCP Server directory not found. Cloning from GitHub...
+    cd ..
+    git clone https://github.com/GongRzhe/Office-PowerPoint-MCP-Server.git
+    cd Office-PowerPoint-MCP-Server
+    
+    :: Install MCP server dependencies
+    echo Installing MCP server dependencies...
+    pip install fastmcp python-pptx
+    
+    cd ..\backend
+) else (
+    :: Navigate to MCP server directory
+    cd ..\Office-PowerPoint-MCP-Server
+    
+    :: Ensure dependencies are installed
+    python -c "import fastmcp, pptx" >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo Installing MCP server dependencies...
+        pip install fastmcp python-pptx
+    )
+    
+    cd ..\ppt-chat-app\backend
+)
+
+:: Set template path environment variable
+set PPT_TEMPLATE_PATH=%cd%\uploads\templates
+
+:: Start MCP server in HTTP mode
+echo Starting MCP server on port 8005...
+cd ..\Office-PowerPoint-MCP-Server
+start /b cmd /c "python ppt_mcp_server.py --transport http --port 8005 > ..\ppt-chat-app\backend\mcp_server.log 2>&1"
+echo MCP Server started on port 8005
+cd ..\ppt-chat-app\backend
+
+:: Wait a moment for MCP server to initialize
+timeout /t 3 /nobreak >nul
+
 :: Start backend
 echo.
 echo Starting backend server...
-start /b cmd /c "python -m uvicorn app.main:app --reload --port 8000 > backend.log 2>&1"
-echo Backend server started on port 8000
+start /b cmd /c "python -m uvicorn app.main:app --reload --port 8006 > backend.log 2>&1"
+echo Backend server started on port 8006
 
 cd ..
 
@@ -165,14 +208,14 @@ timeout /t 5 /nobreak >nul
 echo.
 echo Checking service status...
 
-curl -s http://localhost:8000/health >nul 2>&1
+curl -s http://localhost:8006/health >nul 2>&1
 if %errorlevel% equ 0 (
     echo Backend: RUNNING
 ) else (
     echo Backend: NOT RESPONDING - Check backend\backend.log for errors
 )
 
-curl -s http://localhost:5173 >nul 2>&1
+curl -s http://localhost:5155 >nul 2>&1
 if %errorlevel% equ 0 (
     echo Frontend: RUNNING
 ) else (
@@ -185,13 +228,15 @@ echo ===================================================
 echo    PowerPoint AI Generator is running!
 echo ===================================================
 echo.
-echo Application URL: http://localhost:5173
-echo API Documentation: http://localhost:8000/docs
-echo Health Status: http://localhost:8000/health
+echo Application URL: http://localhost:5155
+echo API Documentation: http://localhost:8006/docs
+echo Health Status: http://localhost:8006/health
+echo MCP Server: http://localhost:8005
 echo.
 echo Logs:
-echo   Backend:  backend\backend.log
-echo   Frontend: frontend\frontend.log
+echo   MCP Server: backend\mcp_server.log
+echo   Backend:    backend\backend.log
+echo   Frontend:   frontend\frontend.log
 echo.
 echo Press Ctrl+C to stop the application
 echo.

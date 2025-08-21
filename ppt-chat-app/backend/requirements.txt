@@ -13,6 +13,9 @@ aiofiles==23.2.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 httpx==0.25.2
+# MCP Server integration
+fastmcp>=2.11.0
+mcp>=1.12.0
 jinja2==3.1.2
 markdown==3.5.1
 beautifulsoup4==4.12.2

@@ -130,7 +130,7 @@ def create_fixture_pptx(
 class APIClient:
     """HTTP client for testing the API endpoints"""
     
-    def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 30):
+    def __init__(self, base_url: str = "http://localhost:8006", timeout: int = 30):
         self.base_url = base_url
         self.timeout = timeout
         self.client = httpx.Client(timeout=timeout)
@@ -293,7 +293,7 @@ def simple_spec(
     return slides
 
 
-def wait_for_api(base_url: str = "http://localhost:8000", max_wait: int = 30) -> bool:
+def wait_for_api(base_url: str = "http://localhost:8006", max_wait: int = 30) -> bool:
     """
     Wait for API to be available
     

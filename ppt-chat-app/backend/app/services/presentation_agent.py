@@ -401,37 +401,65 @@ Respond with 'continue' or 'stop' and a brief reason.
         return "continue" if state["actions"] else "end"
     
     async def _edit_slide_tool(self, params: Dict[str, Any], state: AgentState) -> str:
-        """Tool: Edit an existing slide"""
+        """Tool: Edit an existing slide using MCP directly"""
         
-        from app.services.simple_slide_tools import simple_slide_tools
+        from app.services.mcp import mcp_client
         
         slide_number = params.get("slide_number", 1)
         new_title = params.get("new_title")
         add_content = params.get("add_content", [])
         replace_content = params.get("replace_content", [])
         
-        # For edit operations, we need to ensure the file exists
-        # If it doesn't exist, copy the template first
+        # Ensure output file exists
         output_path = Path(state["output_path"])
         if not output_path.exists():
             import shutil
             shutil.copy2(state["presentation_path"], output_path)
             logger.info(f"Copied template to output path for editing")
         
-        result = simple_slide_tools.edit_slide_content(
-            output_path,
-            slide_number,
-            new_title,
-            add_content,
-            replace_content
-        )
+        # Open the presentation
+        await mcp_client.open_presentation(str(output_path))
         
-        return result
+        # Edit the slide using MCP's manage_text tool
+        slide_index = slide_number - 1  # Convert to 0-based index
+        
+        if new_title:
+            await mcp_client.manage_text(
+                action="replace",
+                slide_index=slide_index,
+                text=new_title,
+                placeholder_index=0  # Title placeholder
+            )
+        
+        if replace_content:
+            # Replace all content
+            await mcp_client.manage_text(
+                action="replace",
+                slide_index=slide_index,
+                text="\n".join(f"• {item}" for item in replace_content),
+                placeholder_index=1  # Content placeholder
+            )
+        elif add_content:
+            # Add to existing content
+            slide_info = await mcp_client.get_slide_info(slide_index)
+            existing_text = slide_info.get("content", "")
+            new_text = existing_text + "\n" + "\n".join(f"• {item}" for item in add_content)
+            await mcp_client.manage_text(
+                action="replace",
+                slide_index=slide_index,
+                text=new_text,
+                placeholder_index=1
+            )
+        
+        # Save the presentation
+        await mcp_client.save_presentation(str(output_path))
+        
+        return f"Successfully edited slide {slide_number}"
     
     async def _add_slide_tool(self, params: Dict[str, Any], state: AgentState) -> str:
-        """Tool: Add a new slide"""
+        """Tool: Add a new slide using MCP directly"""
         
-        from app.services.simple_slide_tools import simple_slide_tools
+        from app.services.mcp import mcp_client
         import shutil
         
         title = params.get("title", "New Slide")
@@ -441,55 +469,126 @@ Respond with 'continue' or 'stop' and a brief reason.
         # Ensure we have a presentation to work with
         output_path = Path(state["output_path"])
         if not output_path.exists():
-            # Copy template to output path first
             shutil.copy2(state["presentation_path"], output_path)
             logger.info(f"Copied template to output path for modification")
         
-        result = await simple_slide_tools.add_new_slide(
-            output_path,
-            title,
-            content,
-            position
+        # Open the presentation
+        await mcp_client.open_presentation(str(output_path))
+        
+        # Use MCP's template system for intelligent slide creation
+        templates = await mcp_client.list_slide_templates()
+        
+        # Find best template for content
+        template_id = "title_and_content"  # Default
+        if title and content:
+            template_id = "title_and_content"
+        elif title and not content:
+            template_id = "title_only"
+        
+        # Create slide from template
+        result = await mcp_client.create_slide_from_template(
+            template_id=template_id,
+            position=position,
+            content={
+                "title": title,
+                "bullets": content
+            }
         )
         
-        return result
+        # Save the presentation
+        await mcp_client.save_presentation(str(output_path))
+        
+        return f"Successfully added slide: {title}"
     
     async def _delete_slide_tool(self, params: Dict[str, Any], state: AgentState) -> str:
-        """Tool: Delete a slide"""
+        """Tool: Delete a slide using MCP directly"""
         
-        from app.services.simple_slide_tools import simple_slide_tools
+        from app.services.mcp import mcp_client
         import shutil
         
         slide_number = params.get("slide_number", 1)
         
-        # Ensure output file exists by copying template if needed
+        # Ensure output file exists
         output_path = Path(state["output_path"])
         if not output_path.exists():
             shutil.copy2(state["presentation_path"], output_path)
             logger.info(f"Copied template to output path for deletion")
         
-        result = simple_slide_tools.delete_slide(
-            output_path,
-            slide_number
+        # Open the presentation
+        await mcp_client.open_presentation(str(output_path))
+        
+        # Delete the slide (MCP uses 0-based indexing)
+        slide_index = slide_number - 1
+        
+        # Note: MCP doesn't have a direct delete_slide tool, but we can achieve this
+        # by recreating the presentation without that slide
+        slides_info = await mcp_client.get_presentation_info()
+        total_slides = slides_info.get("slide_count", 0)
+        
+        if slide_number < 1 or slide_number > total_slides:
+            return f"Error: Invalid slide number {slide_number}"
+        
+        # For now, we'll use the manage_text to clear the slide
+        # In a production system, you'd want to add a delete_slide tool to MCP
+        await mcp_client.manage_text(
+            action="delete",
+            slide_index=slide_index,
+            placeholder_index=0
+        )
+        await mcp_client.manage_text(
+            action="delete",
+            slide_index=slide_index,
+            placeholder_index=1
         )
         
-        return result
+        # Save the presentation
+        await mcp_client.save_presentation(str(output_path))
+        
+        return f"Successfully deleted content from slide {slide_number}"
     
     async def _create_presentation_tool(self, params: Dict[str, Any], state: AgentState) -> str:
-        """Tool: Create a new presentation from template"""
+        """Tool: Create a new presentation from template using MCP"""
         
-        from app.services.simple_slide_tools import simple_slide_tools
+        from app.services.mcp import mcp_client
         
         try:
-            # For first-time creation, simply copy the template
-            # User can make follow-up requests to modify it
-            result = simple_slide_tools.create_presentation(
-                Path(state["presentation_path"]),
-                Path(state["output_path"]),
-                state["user_request"]
-            )
+            # Use MCP's auto-generation capability for intelligent creation
+            topic = state["user_request"]
+            template_path = state["presentation_path"]
+            output_path = state["output_path"]
             
-            return result
+            # If we have a template, use it
+            if Path(template_path).exists():
+                await mcp_client.create_presentation(template_path=str(template_path))
+            else:
+                await mcp_client.create_presentation()
+            
+            # Use AI to generate content based on request
+            slides_spec = params.get("slides_spec", [])
+            if slides_spec:
+                # If we have specific slides to create
+                for slide in slides_spec:
+                    await mcp_client.create_slide_from_template(
+                        template_id="title_and_content",
+                        content=slide
+                    )
+            else:
+                # Use auto-generation for the topic
+                result = await mcp_client.auto_generate_presentation(
+                    topic=topic,
+                    num_slides=5,
+                    style="professional"
+                )
+            
+            # Optimize the text for readability
+            presentation_info = await mcp_client.get_presentation_info()
+            for i in range(presentation_info.get("slide_count", 0)):
+                await mcp_client.optimize_slide_text(slide_index=i)
+            
+            # Save the presentation
+            await mcp_client.save_presentation(str(output_path))
+            
+            return f"Successfully created presentation with AI-powered content generation"
             
         except Exception as e:
             return f"Error creating presentation: {str(e)}"

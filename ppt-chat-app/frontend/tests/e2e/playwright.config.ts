@@ -9,7 +9,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5173',
+    baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:5155',
     headless: (process.env.E2E_HEADLESS ?? 'true') === 'true',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -24,7 +24,7 @@ export default defineConfig({
   ],
   webServer: process.env.CI ? undefined : {
     command: 'npm run dev',
-    port: 5173,
+    port: 5155,
     reuseExistingServer: !process.env.CI,
   },
 });

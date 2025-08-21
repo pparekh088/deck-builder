@@ -61,7 +61,7 @@ echo -e " ${GREEN}Ready!${NC}"
 
 echo -n "Waiting for frontend..."
 attempts=0
-until curl -sf http://localhost:5173 >/dev/null 2>&1; do
+until curl -sf http://localhost:5155 >/dev/null 2>&1; do
     sleep 1
     echo -n "."
     attempts=$((attempts + 1))
@@ -90,7 +90,7 @@ if [ ! -d "$HOME/.cache/ms-playwright" ]; then
 fi
 
 # Run the tests
-E2E_BASE_URL=${E2E_BASE_URL:-http://localhost:5173} \
+E2E_BASE_URL=${E2E_BASE_URL:-http://localhost:5155} \
 E2E_HEADLESS=${E2E_HEADLESS:-true} \
 npx playwright test --config tests/e2e/playwright.config.ts --reporter=list || TEST_FAILED=1
 

@@ -134,8 +134,8 @@ npm install
 3. Configure API endpoint (optional):
 Create a `.env` file if you need to change the default API URL:
 ```env
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
+VITE_API_URL=http://localhost:8006
+VITE_WS_URL=ws://localhost:8006
 ```
 
 ## Running the Application
@@ -144,11 +144,11 @@ VITE_WS_URL=ws://localhost:8000
 
 ```bash
 cd backend
-python -m uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8006
 ```
 
-The API will be available at `http://localhost:8000`
-API documentation: `http://localhost:8000/docs`
+The API will be available at `http://localhost:8006`
+API documentation: `http://localhost:8006/docs`
 
 ### Start the Frontend
 
@@ -157,7 +157,7 @@ cd frontend
 npm run dev
 ```
 
-The application will be available at `http://localhost:5173`
+The application will be available at `http://localhost:5155`
 
 ## Usage Guide
 
@@ -303,7 +303,7 @@ REDIS_PASSWORD=your_redis_cloud_password
 
 Check Redis connection status via the health endpoint:
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8006/health
 ```
 
 Response will show Redis status:
@@ -361,7 +361,7 @@ npm run build
 Backend deployment:
 ```bash
 cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8006
 ```
 
 ## Troubleshooting
