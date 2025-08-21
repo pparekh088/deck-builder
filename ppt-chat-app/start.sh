@@ -200,6 +200,64 @@ else
     fi
 fi
 
+# Start MCP server first
+echo ""
+echo -e "${BLUE}🔌 Starting MCP PowerPoint Server...${NC}"
+
+# Check if MCP server directory exists
+if [ ! -d "../Office-PowerPoint-MCP-Server" ]; then
+    echo -e "${YELLOW}⚠️  MCP Server directory not found. Cloning from GitHub...${NC}"
+    cd ..
+    git clone https://github.com/GongRzhe/Office-PowerPoint-MCP-Server.git
+    cd Office-PowerPoint-MCP-Server
+    
+    # Install MCP server dependencies
+    echo "Installing MCP server dependencies..."
+    pip install fastmcp python-pptx
+    
+    cd ../backend
+else
+    # Navigate to MCP server directory
+    cd ../Office-PowerPoint-MCP-Server
+    
+    # Ensure dependencies are installed
+    if ! $PYTHON_CMD -c "import fastmcp, pptx" 2>/dev/null; then
+        echo "Installing MCP server dependencies..."
+        pip install fastmcp python-pptx
+    fi
+    
+    cd ../ppt-chat-app/backend
+fi
+
+# Set template path environment variable
+export PPT_TEMPLATE_PATH="$(pwd)/uploads/templates"
+
+# Start MCP server in HTTP mode
+echo "Starting MCP server on port 8000..."
+cd ../Office-PowerPoint-MCP-Server
+$PYTHON_CMD ppt_mcp_server.py --transport http --port 8000 > ../ppt-chat-app/backend/mcp_server.log 2>&1 &
+MCP_PID=$!
+echo "MCP Server started with PID: $MCP_PID"
+cd ../ppt-chat-app/backend
+
+# Wait for MCP server to be ready
+echo -n "Waiting for MCP server to be ready"
+for i in {1..10}; do
+    if curl -s http://localhost:8000/health > /dev/null 2>&1 || nc -z localhost 8000 2>/dev/null; then
+        echo ""
+        echo -e "${GREEN}✅ MCP Server is running${NC}"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        echo ""
+        echo -e "${YELLOW}⚠️  MCP Server may not be fully ready yet${NC}"
+        echo "Check backend/mcp_server.log for details"
+    else
+        echo -n "."
+        sleep 1
+    fi
+done
+
 # Start backend in background
 echo ""
 echo "Starting backend server..."
@@ -297,14 +355,17 @@ echo ""
 echo -e "${BLUE}🌐 Access the application at:${NC} http://localhost:5174"
 echo -e "${BLUE}📚 API documentation at:${NC} http://localhost:8001/docs"
 echo -e "${BLUE}🏥 Health status at:${NC} http://localhost:8001/health"
+echo -e "${BLUE}🔌 MCP Server running at:${NC} http://localhost:8000"
 echo ""
 echo -e "${BLUE}📋 Process IDs:${NC}"
-echo "   Backend:  $BACKEND_PID"
-echo "   Frontend: $FRONTEND_PID"
+echo "   MCP Server: $MCP_PID"
+echo "   Backend:    $BACKEND_PID"
+echo "   Frontend:   $FRONTEND_PID"
 echo ""
 echo -e "${BLUE}📝 Logs:${NC}"
-echo "   Backend:  backend/backend.log"
-echo "   Frontend: frontend/frontend.log"
+echo "   MCP Server: backend/mcp_server.log"
+echo "   Backend:    backend/backend.log"
+echo "   Frontend:   frontend/frontend.log"
 echo ""
 echo -e "${YELLOW}To stop the application, press Ctrl+C${NC}"
 echo ""
@@ -313,6 +374,7 @@ echo ""
 cleanup() {
     echo ""
     echo -e "${BLUE}🛑 Stopping services...${NC}"
+    kill $MCP_PID 2>/dev/null
     kill $BACKEND_PID 2>/dev/null
     kill $FRONTEND_PID 2>/dev/null
     
