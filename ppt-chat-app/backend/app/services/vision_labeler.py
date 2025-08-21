@@ -7,13 +7,26 @@ import json
 import logging
 import base64
 import io
-from typing import List, Dict, Optional, Tuple
+import asyncio
+from typing import List, Dict, Optional, Tuple, TYPE_CHECKING
 from PIL import Image
 
-from app.models.vision import (
-    ShapeVisionLabel, LayoutVisionLabels, VisionAnalysisResult,
-    VisionRole, LayoutIntent
-)
+if TYPE_CHECKING:
+    from app.vision_models.vision import (
+        ShapeVisionLabel, LayoutVisionLabels, VisionAnalysisResult,
+        VisionRole, LayoutIntent
+    )
+else:
+    # Import at runtime to avoid circular import
+    import sys
+    import importlib
+    # Dynamically import to bypass the models.py file conflict
+    vision_module = importlib.import_module('app.vision_models.vision')
+    ShapeVisionLabel = vision_module.ShapeVisionLabel
+    LayoutVisionLabels = vision_module.LayoutVisionLabels
+    VisionAnalysisResult = vision_module.VisionAnalysisResult
+    VisionRole = vision_module.VisionRole
+    LayoutIntent = vision_module.LayoutIntent
 from app.models import TemplateProfile, PlaceholderInfo
 from app.utils.geometry import calculate_iou, find_best_iou_match
 from app.services.openai_service import openai_service
@@ -149,6 +162,28 @@ class VisionLabeler:
         
         return shapes
     
+    def _normalize_vision_role(self, role: str) -> str:
+        """Map provider role variants to our allowed VisionRole values"""
+        if not role:
+            return 'Unknown'
+        r = str(role).strip()
+        # Canonical mapping
+        mapping = {
+            'Image': 'HeroImage',
+            'Picture': 'HeroImage',
+            'Header': 'SectionHeader',
+            'Heading': 'SectionHeader',
+            'Text': 'Paragraph',
+            'Body': 'Paragraph',
+            'Content': 'Paragraph',
+        }
+        allowed = {
+            'Title','Subtitle','Bullets','Paragraph','Table','Chart',
+            'HeroImage','Logo','Number','SectionHeader','Footer','Decor','Unknown'
+        }
+        candidate = mapping.get(r, r)
+        return candidate if candidate in allowed else 'Unknown'
+
     async def _analyze_layout_image(
         self,
         image: Image.Image,
@@ -196,8 +231,9 @@ class VisionLabeler:
         ]
         
         try:
-            # Call OpenAI vision model
-            response = await openai_service.client.chat.completions.create(
+            # Call OpenAI vision model (sync client) in a thread to avoid blocking the event loop
+            response = await asyncio.to_thread(
+                openai_service.client.chat.completions.create,
                 model=self.vision_model,
                 messages=messages,
                 max_tokens=1000,
@@ -291,7 +327,7 @@ class VisionLabeler:
                         # Create shape vision label
                         label = ShapeVisionLabel(
                             shape_id=best_shape_id,
-                            role=vision_shape.get('role', 'Unknown'),
+                            role=self._normalize_vision_role(vision_shape.get('role', 'Unknown')),
                             place_content=vision_shape.get('place_content', True),
                             priority=vision_shape.get('priority', 0),
                             confidence=vision_shape.get('confidence', 0.0),
@@ -316,6 +352,12 @@ class VisionLabeler:
         Returns:
             Updated template profile
         """
+        # Import safety map functions
+        from ..analysis.safety_map import (
+            make_safety_mask, compute_shape_safety_scores, encode_mask_to_string
+        )
+        from ..config import settings
+        
         # Create mapping of labels by layout
         labels_map = {}
         for layout_labels in all_labels:
@@ -335,17 +377,70 @@ class VisionLabeler:
                 # Map labels to placeholders
                 label_dict = {label.shape_id: label for label in layout_labels.labels}
                 
+                # Prepare labels for safety map generation
+                safety_labels = []
+                
                 for placeholder in layout.placeholders:
                     total_shapes += 1
                     shape_id = f"shape_{placeholder.idx}"
                     
                     if shape_id in label_dict:
-                        placeholder.vision = label_dict[shape_id]
+                        label = label_dict[shape_id]
+                        # Persist as plain dict to avoid Pydantic serializer warnings
+                        try:
+                            placeholder.vision = label.model_dump()
+                        except Exception:
+                            # Fallback if already a dict or different type
+                            placeholder.vision = getattr(label, '__dict__', label)
                         labeled_shapes += 1
+                        
+                        # Prepare label for safety map
+                        if placeholder.bbox_px:
+                            safety_label = {
+                                "shape_id": shape_id,
+                                "role": label.role,
+                                "place_content": label.place_content,
+                                "bbox_px": placeholder.bbox_px
+                            }
+                            safety_labels.append(safety_label)
+                
+                # Generate safety mask if enabled
+                if settings.SAFETY_MAP_ENABLED and safety_labels:
+                    # Get slide pixel dimensions from profile inches * DPI
+                    dpi = getattr(settings, 'VISION_IMAGE_DPI', 192)
+                    slide_width = int((profile.slide_width or 10.0) * dpi)
+                    slide_height = int((profile.slide_height or 5.625) * dpi)
+                    
+                    # Create safety mask
+                    safety_mask = make_safety_mask(
+                        None,  # No image needed for basic mask
+                        safety_labels,
+                        int(slide_width),
+                        int(slide_height)
+                    )
+                    
+                    # Encode mask for storage
+                    layout.safety_mask = encode_mask_to_string(safety_mask)
+                    
+                    # Compute safety penalties for each shape
+                    shapes_with_safety = compute_shape_safety_scores(
+                        [{"id": p.idx, "bbox_px": p.bbox_px} for p in layout.placeholders if p.bbox_px],
+                        safety_mask
+                    )
+                    
+                    # Update placeholders with safety penalties
+                    for shape_info in shapes_with_safety:
+                        placeholder = next((p for p in layout.placeholders if p.idx == shape_info["id"]), None)
+                        if placeholder:
+                            placeholder.safety_penalty = shape_info.get("safety_penalty", 0.0)
+                            placeholder.place_ok = shape_info.get("place_ok", True)
+                    
+                    logger.debug(f"Generated safety map for layout {layout_idx}")
         
         # Update profile metadata
         profile.vision_enabled = True
         profile.vision_coverage = (labeled_shapes / total_shapes * 100) if total_shapes > 0 else 0
+        profile.safety_maps_enabled = settings.SAFETY_MAP_ENABLED
         
         logger.info(f"Vision labeling complete: {labeled_shapes}/{total_shapes} shapes labeled "
                    f"({profile.vision_coverage:.1f}% coverage)")

@@ -119,6 +119,16 @@ class SessionService:
             template_id=template_id,
             template_name=template_name
         )
+
+    def set_composition_mode(self, session_id: str, mode: str) -> bool:
+        """Set composition mode: 'edit' or 'replace'"""
+        if mode not in ("edit", "replace"):
+            mode = "replace"
+        return self.update_session(session_id, composition_mode=mode)
+
+    def get_composition_mode(self, session_id: str) -> str:
+        session = self.get_session(session_id)
+        return session.composition_mode if session and getattr(session, 'composition_mode', None) else "replace"
     
     def clear_session(self, session_id: str) -> bool:
         """Clear all data for a session"""

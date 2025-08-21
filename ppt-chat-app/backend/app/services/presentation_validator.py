@@ -4,7 +4,7 @@ Validates slide compositions and provides repair actions for issues
 """
 
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
 
 from app.models import (
@@ -30,31 +30,40 @@ class PresentationValidator:
         slides: List[SlideSpec],
         compositions: List[SlideComposition],
         mappings: List[SlideMapping],
-        template_profile: TemplateProfile
+        template_profile: TemplateProfile,
+        render_report: Optional[Dict[str, Any]] = None
     ) -> List[ValidationIssue]:
         """
-        Validate entire presentation
+        Validate a complete presentation
         
         Args:
-            slides: Original slide specifications
+            slides: Slide specifications
             compositions: Composition results
             mappings: Layout mappings
-            template_profile: Template information
+            template_profile: Template profile
+            render_report: Optional 3-pass render report with measurements
             
         Returns:
-            List of validation issues found
+            List of validation issues
         """
+        
         issues = []
         
+        # Validate each slide
         for i, (slide, composition, mapping) in enumerate(zip(slides, compositions, mappings)):
             slide_issues = self._validate_slide(
-                slide, composition, mapping, template_profile, i + 1
+                slide, composition, mapping, template_profile, i + 1, render_report
             )
             issues.extend(slide_issues)
         
         # Check presentation-level issues
         presentation_issues = self._validate_presentation_level(slides, template_profile)
         issues.extend(presentation_issues)
+        
+        # Add issues from render report if available
+        if render_report and render_report.get("status") == "success":
+            render_issues = self._extract_render_issues(render_report)
+            issues.extend(render_issues)
         
         return issues
     
@@ -64,7 +73,8 @@ class PresentationValidator:
         composition: SlideComposition,
         mapping: SlideMapping,
         template_profile: TemplateProfile,
-        slide_number: int
+        slide_number: int,
+        render_report: Optional[Dict[str, Any]] = None
     ) -> List[ValidationIssue]:
         """Validate a single slide"""
         
@@ -80,8 +90,32 @@ class PresentationValidator:
                 suggested_fix="Try different layout or simplify content"
             ))
         
-        # Check for overflow
-        if composition.overflow_text:
+        # Check for overflow (use measurement if available)
+        if render_report:
+            # Check if this slide had measured overflow
+            overflows = render_report.get("corrections", [])
+            slide_overflows = [o for o in overflows if o.get("slide_index") == slide_number - 1]
+            
+            if slide_overflows:
+                for overflow in slide_overflows:
+                    if overflow["type"] == "font_resize":
+                        issues.append(ValidationIssue(
+                            slide_number=slide_number,
+                            issue_type="overflow_fixed",
+                            description=f"Font size reduced from {overflow['old_size']} to {overflow['new_size']}pt to fix overflow",
+                            severity="info",
+                            suggested_fix="Content fits after font adjustment"
+                        ))
+                    elif overflow["type"] == "slide_split":
+                        issues.append(ValidationIssue(
+                            slide_number=slide_number,
+                            issue_type="slide_split",
+                            description=f"Content split to continuation slide {overflow['continuation_slide'] + 1}",
+                            severity="info",
+                            suggested_fix="Content distributed across multiple slides"
+                        ))
+        elif composition.overflow_text:
+            # Fallback to composition-reported overflow
             issues.append(ValidationIssue(
                 slide_number=slide_number,
                 issue_type="overflow",
@@ -140,6 +174,47 @@ class PresentationValidator:
                 severity="error",
                 suggested_fix="Change layout or remove content requiring missing placeholders"
             ))
+        
+        return issues
+    
+    def _extract_render_issues(self, render_report: Dict[str, Any]) -> List[ValidationIssue]:
+        """Extract validation issues from render report"""
+        issues = []
+        
+        # Report overall render status
+        if render_report.get("status") == "error":
+            issues.append(ValidationIssue(
+                slide_number=0,
+                issue_type="render_error",
+                description=f"Render measurement failed: {render_report.get('error', 'Unknown error')}",
+                severity="warning",
+                suggested_fix="Check LibreOffice installation and PDF conversion"
+            ))
+            return issues
+        
+        # Report corrections summary
+        corrections = render_report.get("corrections", [])
+        if corrections:
+            font_adjustments = len([c for c in corrections if c["type"] == "font_resize"])
+            slide_splits = len([c for c in corrections if c["type"] == "slide_split"])
+            
+            if font_adjustments > 0:
+                issues.append(ValidationIssue(
+                    slide_number=0,
+                    issue_type="font_adjustments",
+                    description=f"Font size adjusted on {font_adjustments} slides to prevent overflow",
+                    severity="info",
+                    suggested_fix="Review adjusted slides for readability"
+                ))
+            
+            if slide_splits > 0:
+                issues.append(ValidationIssue(
+                    slide_number=0,
+                    issue_type="slides_added",
+                    description=f"{slide_splits} continuation slides added for overflow content",
+                    severity="info",
+                    suggested_fix="Review slide flow and transitions"
+                ))
         
         return issues
     

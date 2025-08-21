@@ -26,8 +26,8 @@ from app.services.layout_matcher import layout_matcher
 from app.services.slide_composer import slide_composer
 from app.services.presentation_validator import presentation_validator
 
-# Import the template routes
-from app.api.routes.template import router as template_router
+# Import the template routes (disabled for now - missing dependencies)
+# from app.api.routes.template import router as template_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +50,7 @@ app.add_middleware(
 )
 
 # Include the template router
-app.include_router(template_router)
+# app.include_router(template_router)  # Disabled - missing dependencies
 
 # Mount static files for serving generated files
 if not os.path.exists(settings.upload_dir):
@@ -215,13 +215,58 @@ async def chat(request: ChatRequest):
         })
         
         if template_profile:
-            # Use agentic system with template awareness
-            response_text, markdown, preview_url = await generate_with_agentic_system(
-                request.session_id,
+            # Use NEW agentic system only
+            from app.services.presentation_agent import presentation_agent
+            
+            # Check if presentation already exists (for edit mode)
+            existing_presentation_path = Path(settings.upload_dir) / f"{request.session_id}_presentation.pptx"
+            template_path = Path(settings.templates_dir) / f"{session.template_id}.pptx"
+            output_path = Path(settings.upload_dir) / f"{request.session_id}_presentation.pptx"
+            
+            if not existing_presentation_path.exists():
+                existing_presentation_path = template_path
+            
+            agent_response = await presentation_agent.process_request(
                 request.message,
-                session.chat_history,
-                template_profile
+                request.session_id,
+                template_profile,
+                existing_presentation_path,
+                output_path,
+                session.chat_history
             )
+            
+            # Send debug information to frontend
+            try:
+                debug_info = agent_response["debug_info"]
+                logger.info(f"Sending debug info to frontend: {len(debug_info.get('thinking_steps', []))} thinking steps")
+                
+                # Debug: log the actual message being sent
+                debug_message = {
+                    "type": "agent_debug",
+                    "data": debug_info
+                }
+                logger.info(f"Debug message structure: {list(debug_message.keys())}")
+                logger.info(f"Debug data keys: {list(debug_info.keys())}")
+                logger.info(f"Thinking steps count: {len(debug_info.get('thinking_steps', []))}")
+                logger.info(f"Actions executed count: {len(debug_info.get('actions_executed', []))}")
+                
+                # Check if session has active WebSocket connection
+                if request.session_id in manager.active_connections:
+                    logger.info(f"WebSocket connection found for session {request.session_id}")
+                    await manager.send_message(request.session_id, debug_message)
+                    logger.info("Debug info sent successfully")
+                else:
+                    logger.warning(f"No WebSocket connection found for session {request.session_id}")
+                    logger.info(f"Active connections: {list(manager.active_connections.keys())}")
+            except Exception as e:
+                logger.error(f"Failed to send debug info: {e}")
+            
+            response_text = agent_response["result"]
+            markdown = ""  # Agent handles content directly
+            preview_url = f"/api/preview/{request.session_id}" if output_path.exists() else None
+            # Ensure the composed deck exists for download endpoint
+            # generate_with_agentic_system saves to uploads/{session_id}_presentation.pptx
+            # So no extra action needed here
         else:
             # Fallback to simple generation
             response_text, markdown = await openai_service.generate_presentation_content(
@@ -248,6 +293,36 @@ async def chat(request: ChatRequest):
         assistant_message = ChatMessage(role=MessageRole.ASSISTANT, content=response_text)
         session_service.add_chat_message(request.session_id, assistant_message)
         
+        # Collect placements and render metrics if features are enabled
+        placements = None
+        render_metrics = None
+        
+        # Get placements if solver is enabled
+        if settings.ACCURATE_SOLVER_ENABLED:
+            # Try to get placements from session data
+            mappings = session_service.get_slide_mappings(request.session_id)
+            if mappings:
+                placements = []
+                for mapping in mappings:
+                    if hasattr(mapping, 'content_mapping') and mapping.content_mapping:
+                        for content_id, shape_id in mapping.content_mapping.items():
+                            placements.append({
+                                "key": content_id,
+                                "shape_id": shape_id,
+                                "ph_type": "BODY",  # Would need to get actual type
+                                "safety_ok": True,  # Would need actual safety check
+                                "slide_id": mapping.slide_spec_id
+                            })
+        
+        # Get render metrics if measurement is enabled
+        if settings.RENDER_MEASURE_ENABLED:
+            # Get from session or compositions
+            render_metrics = {
+                "font_shrink_events": 0,
+                "continuation_slides_added": 0
+            }
+            # Would need to collect actual metrics from render service
+        
         # Send WebSocket notification
         await manager.send_message(request.session_id, {
             "type": "chat",
@@ -263,120 +338,88 @@ async def chat(request: ChatRequest):
             markdown_content=markdown,
             session_id=request.session_id,
             preview_available=preview_url is not None,
-            preview_url=preview_url
+            preview_url=preview_url,
+            placements=placements,
+            render_metrics=render_metrics
         )
-        
+            
     except Exception as e:
-        logger.error(f"Error in chat: {str(e)}")
+        logger.error(f"Error in chat: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-async def generate_with_agentic_system(
-    session_id: str,
-    user_prompt: str,
-    chat_history: List[ChatMessage],
-    template_profile: TemplateProfile
-) -> tuple[str, str, Optional[str]]:
-    """Generate presentation using the agentic system"""
+async def detect_user_intent(user_prompt: str, chat_history: List[ChatMessage]) -> str:
+    """Use LLM to detect user intent for presentation composition"""
     try:
-        # Step 1: Create presentation plan
-        await manager.send_message(session_id, {
-            "type": "plan_update",
-            "data": {"status": "creating", "message": "Planning slides..."}
-        })
+        # Build context from chat history
+        context = ""
+        if chat_history:
+            recent_messages = chat_history[-3:]  # Last 3 messages for context
+            for msg in recent_messages:
+                context += f"{msg.role}: {msg.content}\n"
         
-        plan = await slide_planner.create_presentation_plan(
-            user_prompt,
-            template_profile,
-            chat_history,
-            session_id
-        )
-        session_service.save_presentation_plan(session_id, plan)
+        # Create intent detection prompt
+        intent_prompt = f"""
+Analyze this user request and determine the intent for PowerPoint presentation management.
+
+Chat Context:
+{context}
+
+Current User Request: "{user_prompt}"
+
+Determine the intent from these options:
+
+1. "edit" - User wants to modify existing slides or add content to existing slides
+   Examples: 
+   - "edit slide 2"
+   - "update the roadmap" 
+   - "add agentic ai in the roadmap slide"
+   - "change the title of slide 3"
+   - "add more bullets to the benefits slide"
+   - "modify the conclusion"
+   - "add X to the Y slide"
+
+2. "delete" - User wants to remove specific slides
+   Examples:
+   - "delete slide 3"
+   - "remove the last slide"
+   - "drop slide 2"
+
+3. "replace" - User wants to create a completely new presentation from scratch
+   Examples:
+   - "create 5 slides about AI"
+   - "make a presentation on finance"
+   - "generate slides on blockchain"
+   - "build a deck about marketing"
+
+Key Rules:
+- If user references existing slide content (roadmap, benefits, conclusion, etc.) AND wants to add/modify → "edit"
+- If user says "add X to Y slide" or "add X in the Y" → "edit" 
+- If user mentions specific slide numbers or slide names → "edit"
+- If user wants to remove slides → "delete"
+- If user wants entirely new content without referencing existing slides → "replace"
+- When in doubt between edit and replace, choose "edit" if there's any reference to existing content
+
+Respond with only one word: edit, delete, or replace
+"""
+
+        # Call OpenAI for intent detection
+        response = await openai_service.get_completion([
+            {"role": "system", "content": "You are an expert at understanding user intent for presentation management. Respond with only one word."},
+            {"role": "user", "content": intent_prompt}
+        ])
         
-        await manager.send_message(session_id, {
-            "type": "plan_update",
-            "data": {
-                "status": "complete",
-                "slide_count": len(plan.slides),
-                "slides": [{"title": s.title, "bullet_count": len(s.bullets)} for s in plan.slides]
-            }
-        })
-        
-        # Step 2: Match layouts
-        await manager.send_message(session_id, {
-            "type": "status",
-            "data": {"stage": "matching", "message": "Matching slides to layouts..."}
-        })
-        
-        mappings = layout_matcher.match_slides_to_layouts(plan.slides, template_profile)
-        session_service.save_slide_mappings(session_id, mappings)
-        
-        # Step 3: Compose presentation
-        await manager.send_message(session_id, {
-            "type": "status",
-            "data": {"stage": "composing", "message": "Creating slides..."}
-        })
-        
-        template_path = Path(settings.templates_dir) / f"{template_profile.template_id}.pptx"
-        output_path = Path(settings.upload_dir) / f"{session_id}_presentation.pptx"
-        
-        compositions = slide_composer.compose_presentation(
-            template_path,
-            output_path,
-            plan.slides,
-            mappings,
-            template_profile
-        )
-        
-        # Step 4: Validate and repair
-        await manager.send_message(session_id, {
-            "type": "status",
-            "data": {"stage": "validating", "message": "Validating presentation..."}
-        })
-        
-        final_plan, final_mappings, issues = await presentation_validator.repair_loop(
-            plan,
-            compositions,
-            mappings,
-            template_profile,
-            max_iterations=2
-        )
-        
-        # If plan changed, recompose
-        if final_plan.slides != plan.slides:
-            compositions = slide_composer.compose_presentation(
-                template_path,
-                output_path,
-                final_plan.slides,
-                final_mappings,
-                template_profile
-            )
-        
-        # Generate markdown from final plan
-        markdown = generate_markdown_from_plan(final_plan)
-        
-        # Send completion status
-        await manager.send_message(session_id, {
-            "type": "preview_update",
-            "data": {
-                "status": "complete",
-                "preview_url": f"/api/preview/{session_id}",
-                "issues": [{"type": i.issue_type, "description": i.description} for i in issues if i.severity == "warning"]
-            }
-        })
-        
-        # Create response text
-        response_text = f"I've created a presentation with {len(final_plan.slides)} slides based on your request. "
-        if issues:
-            warnings = [i for i in issues if i.severity == "warning"]
-            if warnings:
-                response_text += f"Note: {len(warnings)} minor issues were automatically handled. "
-        response_text += "The presentation is ready for preview and download."
-        
-        return response_text, markdown, f"/api/preview/{session_id}"
+        intent = response.strip().lower()
+        if intent not in ["edit", "delete", "replace"]:
+            intent = "replace"  # Default fallback
+
+        logger.info(f"LLM Intent detected: {intent.upper()} based on prompt: {user_prompt[:100]}")
+        return intent
         
     except Exception as e:
-        logger.error(f"Error in agentic generation: {str(e)}")
-        raise
+        logger.warning(f"Intent detection failed: {e}, defaulting to replace")
+        return "replace"
+
+
 
 def generate_markdown_from_plan(plan: PresentationPlan) -> str:
     """Convert presentation plan to markdown format"""
@@ -430,12 +473,12 @@ async def download_presentation(session_id: str):
     # Check if presentation file exists
     file_path = os.path.join(settings.upload_dir, f"{session_id}_presentation.pptx")
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Presentation not found")
-    
+            raise HTTPException(status_code=404, detail="Presentation not found")
+        
     return FileResponse(
         file_path,
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename=f"presentation_{session_id}.pptx"
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            filename=f"presentation_{session_id}.pptx"
     )
 
 @app.post("/api/slide/{session_id}/{slide_number}/layout")
@@ -519,10 +562,19 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
     try:
         while True:
-            # Keep connection alive
-            data = await websocket.receive_text()
-            # Echo back or handle specific commands
-            await websocket.send_text(f"Echo: {data}")
+            # Keep connection alive and handle incoming messages
+            message = await websocket.receive_json()
+            logger.info(f"WebSocket received message: {message}")
+            
+            # Handle specific commands
+            if message.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+            elif message.get("type") == "get_status":
+                await websocket.send_json({"type": "status", "data": {"connected": True}})
+            else:
+                # Echo back other messages
+                await websocket.send_json({"type": "echo", "data": message})
+                
     except WebSocketDisconnect:
         manager.disconnect(session_id)
     except Exception as e:

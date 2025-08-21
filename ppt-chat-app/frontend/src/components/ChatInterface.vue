@@ -9,6 +9,16 @@
         </p>
       </div>
       <div class="flex items-center space-x-2">
+        <!-- Debug Toggle Button -->
+        <button 
+          @click="agentDebug.visible = !agentDebug.visible"
+          :class="agentDebug.visible ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'"
+          class="px-3 py-1 rounded-md text-sm font-medium hover:bg-blue-50 transition-colors"
+        >
+          <CogIcon class="w-4 h-4 inline mr-1" />
+          Debug
+        </button>
+        
         <span v-if="wsConnected" class="flex items-center text-green-600">
           <span class="w-2 h-2 bg-green-600 rounded-full mr-2 animate-pulse"></span>
           Connected
@@ -17,6 +27,64 @@
           <span class="w-2 h-2 bg-red-600 rounded-full mr-2"></span>
           Disconnected
         </span>
+      </div>
+    </div>
+
+    <!-- Agent Debug Panel (collapsible) -->
+    <div v-if="agentDebug.visible" class="border-b bg-gray-50 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-lg font-semibold text-gray-800 flex items-center">
+          <CogIcon class="w-5 h-5 mr-2" />
+          Agent Debug Info
+        </h3>
+        <button @click="agentDebug.visible = false" class="text-gray-500 hover:text-gray-700">
+          <XMarkIcon class="w-5 h-5" />
+        </button>
+      </div>
+      
+      <!-- Analysis -->
+      <div v-if="agentDebug.data.analysis" class="mb-4">
+        <h4 class="font-medium text-gray-700 mb-2">📊 Presentation Analysis</h4>
+        <div class="bg-white p-3 rounded border text-sm">
+          <p><strong>Total Slides:</strong> {{ agentDebug.data.analysis.total_slides }}</p>
+          <div v-if="agentDebug.data.analysis.slides" class="mt-2">
+            <p><strong>Slides:</strong></p>
+            <ul class="list-disc list-inside ml-4 text-xs">
+              <li v-for="slide in agentDebug.data.analysis.slides" :key="slide.index">
+                Slide {{ slide.index + 1 }}: {{ slide.title || 'No title' }}
+                <span v-if="slide.content.length" class="text-gray-500">({{ slide.content.length }} bullets)</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Plan -->
+      <div v-if="agentDebug.data.plan" class="mb-4">
+        <h4 class="font-medium text-gray-700 mb-2">🎯 Agent Plan</h4>
+        <div class="bg-white p-3 rounded border text-sm whitespace-pre-wrap">{{ agentDebug.data.plan }}</div>
+      </div>
+      
+      <!-- Thinking Steps -->
+      <div v-if="agentDebug.data.thinking_steps && agentDebug.data.thinking_steps.length" class="mb-4">
+        <h4 class="font-medium text-gray-700 mb-2">🧠 Thinking Steps</h4>
+        <div class="bg-white p-3 rounded border max-h-40 overflow-y-auto">
+          <div v-for="(step, index) in agentDebug.data.thinking_steps" :key="index" class="text-sm mb-2 pb-2 border-b last:border-b-0">
+            <span class="font-medium text-blue-600">{{ step.role }}:</span>
+            <span class="ml-2">{{ step.content }}</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Actions Executed -->
+      <div v-if="agentDebug.data.actions_executed && agentDebug.data.actions_executed.length" class="mb-4">
+        <h4 class="font-medium text-gray-700 mb-2">⚡ Actions Executed ({{ agentDebug.data.total_actions }})</h4>
+        <div class="bg-white p-3 rounded border">
+          <div v-for="(action, index) in agentDebug.data.actions_executed" :key="index" class="text-sm mb-1">
+            <span class="font-medium text-green-600">✓</span>
+            <span class="ml-2">{{ action.content }}</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -137,6 +205,7 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useChatStore } from '../stores/chat';
+import wsService from '../services/websocket';
 import {
   DocumentTextIcon,
   UserCircleIcon,
@@ -146,6 +215,8 @@ import {
   DocumentArrowUpIcon,
   PaperAirplaneIcon,
   PaperClipIcon,
+  CogIcon,
+  XMarkIcon,
 } from '@heroicons/vue/24/outline';
 
 const chatStore = useChatStore();
@@ -162,6 +233,18 @@ const {
 const messageInput = ref('');
 const messagesContainer = ref(null);
 const showTemplateUpload = ref(false);
+
+// Agent debug info
+const agentDebug = ref({
+  visible: false,
+  data: {
+    analysis: null,
+    plan: '',
+    actions_executed: [],
+    thinking_steps: [],
+    total_actions: 0
+  }
+});
 
 const getMessageClass = (role) => {
   return {
@@ -237,6 +320,19 @@ onMounted(async () => {
   if (!sessionId.value) {
     await chatStore.initializeSession();
   }
+  
+  // Listen for agent debug messages
+  wsService.on('agent_debug', (data) => {
+    console.log('Received agent debug data:', data);
+    agentDebug.value.data = data;
+    agentDebug.value.visible = true; // Auto-show debug panel when agent runs
+    console.log('Agent Debug Info updated:', agentDebug.value);
+  });
+  
+  // Also listen for all websocket messages to debug
+  wsService.on('*', (message) => {
+    console.log('WebSocket message received:', message);
+  });
 });
 
 onUnmounted(() => {

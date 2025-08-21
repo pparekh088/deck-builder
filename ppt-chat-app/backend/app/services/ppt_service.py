@@ -71,11 +71,11 @@ class PowerPointService:
                 template_path = self.templates_dir / f"{template_id}.pptx"
                 if template_path.exists():
                     prs = Presentation(str(template_path))
-                    # Clear existing slides except the first (template slide)
-                    while len(prs.slides) > 1:
-                        rId = prs.slides._sldIdLst[1].rId
+                    # Clear ALL existing slides - we'll use layouts from the template
+                    while len(prs.slides) > 0:
+                        rId = prs.slides._sldIdLst[0].rId
                         prs.part.drop_rel(rId)
-                        del prs.slides._sldIdLst[1]
+                        del prs.slides._sldIdLst[0]
                 else:
                     prs = Presentation()
             else:
@@ -109,6 +109,57 @@ class PowerPointService:
             
         except Exception as e:
             logger.error(f"Error converting markdown to PPTX: {str(e)}")
+            raise
+    
+    def parse_markdown_to_slides(self, markdown: str) -> List[SlidePreview]:
+        """Parse markdown and return lightweight slide previews without writing a file"""
+        try:
+            slides_data = self._parse_markdown(markdown or "")
+            previews: List[SlidePreview] = []
+            for idx, slide_data in enumerate(slides_data):
+                previews.append(
+                    SlidePreview(
+                        slide_number=idx + 1,
+                        title=slide_data.get('title', f'Slide {idx + 1}'),
+                        content='\n'.join(slide_data.get('bullets', [])),
+                        image_url=None
+                    )
+                )
+            return previews
+        except Exception as e:
+            logger.error(f"Error parsing markdown to slides: {str(e)}")
+            return []
+
+    def generate_presentation(
+        self,
+        markdown: str,
+        template_id: Optional[str],
+        session_id: str
+    ) -> str:
+        """Create a PPTX for the session and place it at uploads/{session_id}_presentation.pptx
+
+        Returns absolute output path.
+        """
+        try:
+            tmp_path, _ = self.markdown_to_pptx(markdown, template_id, session_id)
+            target_path = self.uploads_dir / f"{session_id}_presentation.pptx"
+            # Overwrite if exists
+            try:
+                if Path(tmp_path) != target_path:
+                    # Replace target with tmp file contents
+                    Path(target_path).unlink(missing_ok=True)
+                    Path(tmp_path).rename(target_path)
+                else:
+                    # Already at target
+                    pass
+            except Exception:
+                # Fallback to copy contents
+                with open(tmp_path, 'rb') as src, open(target_path, 'wb') as dst:
+                    dst.write(src.read())
+                Path(tmp_path).unlink(missing_ok=True)
+            return str(target_path)
+        except Exception as e:
+            logger.error(f"Error generating presentation: {str(e)}")
             raise
     
     def _parse_markdown(self, markdown: str) -> List[dict]:
@@ -158,12 +209,24 @@ class PowerPointService:
     def _create_slide(self, presentation: Presentation, slide_data: dict, use_template: bool) -> object:
         """Create a slide with the given data"""
         try:
-            if use_template and len(presentation.slides) > 0:
-                # Use the first slide as template
-                slide_layout = presentation.slides[0].slide_layout
+            if use_template:
+                # Use a layout from the template (prefer title and content layout)
+                # Try to find a title and content layout, fallback to first available
+                slide_layout = None
+                for layout in presentation.slide_layouts:
+                    # Check if layout has both title and content placeholders
+                    has_title = any(ph.placeholder_format.type == 1 for ph in layout.placeholders)
+                    has_content = any(ph.placeholder_format.type in [7, 2] for ph in layout.placeholders)
+                    if has_title and has_content:
+                        slide_layout = layout
+                        break
+                
+                # Fallback to first layout if no title+content found
+                if not slide_layout:
+                    slide_layout = presentation.slide_layouts[0]
             else:
                 # Use default title and content layout
-                slide_layout = presentation.slide_layouts[1]
+                slide_layout = presentation.slide_layouts[1] if len(presentation.slide_layouts) > 1 else presentation.slide_layouts[0]
             
             slide = presentation.slides.add_slide(slide_layout)
             

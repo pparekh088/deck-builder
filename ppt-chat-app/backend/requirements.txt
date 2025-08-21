@@ -7,6 +7,8 @@ pydantic==2.5.2
 pydantic-settings==2.1.0
 redis==5.0.1
 websockets==12.0
+langgraph==0.0.55
+typing-extensions==4.8.0
 aiofiles==23.2.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
@@ -21,6 +23,12 @@ Pillow==10.1.0  # Image processing
 pdf2image==1.16.3  # PDF to image conversion (optional, for LibreOffice output)
 PyMuPDF==1.23.8  # Alternative PDF processing (optional)
 numpy==1.26.2  # For numerical operations
+
+# Accuracy++ Dependencies
+pulp==2.7.0  # ILP solver with CBC backend
+pymupdf==1.23.8  # PDF text bbox measurement (alias for PyMuPDF)
+scikit-learn==1.3.2  # For archetype classification
+
 pytest==7.4.3  # For testing
 pytest-asyncio==0.21.1  # For async tests
 
