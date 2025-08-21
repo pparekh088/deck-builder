@@ -1,15 +1,18 @@
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
-from PIL import Image
+"""
+PowerPoint Service using MCP Server Integration
+Replaces direct python-pptx manipulation with MCP server calls
+"""
+
 import os
 import uuid
+import asyncio
 from typing import Optional, List, Tuple
 import logging
 from pathlib import Path
 import re
 from app.config import settings
 from app.models import SlidePreview
+from app.services.mcp_client import mcp_client
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,26 @@ class PowerPointService:
         self.templates_dir.mkdir(exist_ok=True)
         self.uploads_dir.mkdir(exist_ok=True)
         self.previews_dir.mkdir(exist_ok=True)
+        
+        # Initialize MCP connection on startup
+        self._ensure_mcp_connection()
+    
+    def _ensure_mcp_connection(self):
+        """Ensure MCP client is connected"""
+        try:
+            # Run async connection in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(mcp_client.connect())
+            loop.close()
+        except Exception as e:
+            logger.warning(f"Failed to connect to MCP server: {e}")
+            # Continue without MCP - will try to reconnect on each operation
+    
+    async def _ensure_mcp_connected_async(self):
+        """Ensure MCP client is connected (async version)"""
+        if not mcp_client.http_client:
+            await mcp_client.connect()
     
     def save_template(self, file_content: bytes, filename: str, session_id: str) -> str:
         """Save uploaded template and return template ID"""
@@ -33,27 +56,25 @@ class PowerPointService:
             with open(template_path, 'wb') as f:
                 f.write(file_content)
             
-            # Verify it's a valid PowerPoint file
-            prs = Presentation(str(template_path))
-            
-            # Generate thumbnail from first slide
-            thumbnail_path = self._generate_template_thumbnail(prs, template_id)
+            # Verify it's a valid PowerPoint file using MCP
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._verify_template_async(str(template_path)))
+            finally:
+                loop.close()
             
             return template_id
         except Exception as e:
             logger.error(f"Error saving template: {str(e)}")
             raise ValueError(f"Invalid PowerPoint template: {str(e)}")
     
-    def _generate_template_thumbnail(self, presentation: Presentation, template_id: str) -> Optional[str]:
-        """Generate a thumbnail from the template's first slide"""
-        try:
-            # For now, we'll return None as generating actual thumbnails requires
-            # additional libraries like python-pptx2img or COM automation
-            # This is a placeholder for the actual implementation
-            return None
-        except Exception as e:
-            logger.error(f"Error generating thumbnail: {str(e)}")
-            return None
+    async def _verify_template_async(self, template_path: str):
+        """Verify template is valid by opening it with MCP"""
+        await self._ensure_mcp_connected_async()
+        await mcp_client.open_presentation(template_path)
+    
+
     
     def markdown_to_pptx(
         self, 
@@ -66,50 +87,82 @@ class PowerPointService:
         Returns: (pptx_path, slide_previews)
         """
         try:
-            # Load template or create new presentation
-            if template_id:
-                template_path = self.templates_dir / f"{template_id}.pptx"
-                if template_path.exists():
-                    prs = Presentation(str(template_path))
-                    # Clear ALL existing slides - we'll use layouts from the template
-                    while len(prs.slides) > 0:
-                        rId = prs.slides._sldIdLst[0].rId
-                        prs.part.drop_rel(rId)
-                        del prs.slides._sldIdLst[0]
-                else:
-                    prs = Presentation()
-            else:
-                prs = Presentation()
-            
-            # Parse markdown and create slides
-            slides_data = self._parse_markdown(markdown)
-            slide_previews = []
-            
-            for idx, slide_data in enumerate(slides_data):
-                slide = self._create_slide(prs, slide_data, template_id is not None)
-                
-                # Create preview data
-                preview = SlidePreview(
-                    slide_number=idx + 1,
-                    title=slide_data.get('title', f'Slide {idx + 1}'),
-                    content='\n'.join(slide_data.get('bullets', [])),
-                    image_url=None  # Will be generated if needed
+            # Run async version in sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    self._markdown_to_pptx_async(markdown, template_id, session_id)
                 )
-                slide_previews.append(preview)
-            
-            # Save the presentation
-            output_filename = f"{session_id}_{uuid.uuid4().hex[:8]}.pptx"
-            output_path = self.uploads_dir / output_filename
-            prs.save(str(output_path))
-            
-            # Generate slide preview images
-            self._generate_slide_previews(str(output_path), session_id)
-            
-            return str(output_path), slide_previews
-            
+                return result
+            finally:
+                loop.close()
         except Exception as e:
             logger.error(f"Error converting markdown to PPTX: {str(e)}")
             raise
+    
+    async def _markdown_to_pptx_async(
+        self,
+        markdown: str,
+        template_id: Optional[str] = None,
+        session_id: str = ""
+    ) -> Tuple[str, List[SlidePreview]]:
+        """Async version of markdown to PPTX conversion using MCP"""
+        await self._ensure_mcp_connected_async()
+        
+        # Create or open presentation
+        if template_id:
+            template_path = self.templates_dir / f"{template_id}.pptx"
+            if template_path.exists():
+                presentation_id = await mcp_client.open_presentation(str(template_path))
+                # Clear existing slides if needed
+                slides = await mcp_client.list_slides()
+                for i in range(len(slides) - 1, -1, -1):
+                    await mcp_client.delete_slide(i)
+            else:
+                presentation_id = await mcp_client.create_presentation()
+        else:
+            presentation_id = await mcp_client.create_presentation()
+        
+        # Parse markdown and create slides
+        slides_data = self._parse_markdown(markdown)
+        slide_previews = []
+        
+        for idx, slide_data in enumerate(slides_data):
+            # Add slide using MCP
+            await mcp_client.add_slide(layout_index=1)  # Use title and content layout
+            
+            # Add title
+            if slide_data.get('title'):
+                await mcp_client.add_text_to_slide(
+                    slide_index=idx,
+                    text=slide_data['title'],
+                    placeholder_index=0  # Title placeholder
+                )
+            
+            # Add bullets
+            if slide_data.get('bullets'):
+                await mcp_client.add_bullet_points(
+                    slide_index=idx,
+                    bullet_points=slide_data['bullets'],
+                    placeholder_index=1  # Content placeholder
+                )
+            
+            # Create preview data
+            preview = SlidePreview(
+                slide_number=idx + 1,
+                title=slide_data.get('title', f'Slide {idx + 1}'),
+                content='\n'.join(slide_data.get('bullets', [])),
+                image_url=None
+            )
+            slide_previews.append(preview)
+        
+        # Save the presentation
+        output_filename = f"{session_id}_{uuid.uuid4().hex[:8]}.pptx"
+        output_path = self.uploads_dir / output_filename
+        await mcp_client.save_presentation(str(output_path), presentation_id)
+        
+        return str(output_path), slide_previews
     
     def parse_markdown_to_slides(self, markdown: str) -> List[SlidePreview]:
         """Parse markdown and return lightweight slide previews without writing a file"""
@@ -206,94 +259,7 @@ class PowerPointService:
         
         return slides
     
-    def _create_slide(self, presentation: Presentation, slide_data: dict, use_template: bool) -> object:
-        """Create a slide with the given data"""
-        try:
-            if use_template:
-                # Use a layout from the template (prefer title and content layout)
-                # Try to find a title and content layout, fallback to first available
-                slide_layout = None
-                for layout in presentation.slide_layouts:
-                    # Check if layout has both title and content placeholders
-                    has_title = any(ph.placeholder_format.type == 1 for ph in layout.placeholders)
-                    has_content = any(ph.placeholder_format.type in [7, 2] for ph in layout.placeholders)
-                    if has_title and has_content:
-                        slide_layout = layout
-                        break
-                
-                # Fallback to first layout if no title+content found
-                if not slide_layout:
-                    slide_layout = presentation.slide_layouts[0]
-            else:
-                # Use default title and content layout
-                slide_layout = presentation.slide_layouts[1] if len(presentation.slide_layouts) > 1 else presentation.slide_layouts[0]
-            
-            slide = presentation.slides.add_slide(slide_layout)
-            
-            # Set title
-            if slide.shapes.title:
-                slide.shapes.title.text = slide_data.get('title', '')
-            
-            # Set content
-            for shape in slide.shapes:
-                if not shape.has_text_frame:
-                    continue
-                if shape == slide.shapes.title:
-                    continue
-                    
-                text_frame = shape.text_frame
-                text_frame.clear()
-                
-                # Add subtitle if exists
-                if slide_data.get('subtitle'):
-                    p = text_frame.add_paragraph()
-                    p.text = slide_data['subtitle']
-                    p.font.bold = True
-                    p.font.size = Pt(20)
-                    text_frame.add_paragraph()  # Add spacing
-                
-                # Add bullet points
-                for bullet in slide_data.get('bullets', []):
-                    p = text_frame.add_paragraph()
-                    p.text = bullet
-                    p.level = 0
-                    p.font.size = Pt(18)
-                
-                break  # Only fill the first content placeholder
-            
-            return slide
-            
-        except Exception as e:
-            logger.error(f"Error creating slide: {str(e)}")
-            # Fallback to basic slide creation
-            slide_layout = presentation.slide_layouts[5]  # Blank layout
-            slide = presentation.slides.add_slide(slide_layout)
-            
-            # Add title manually
-            left = Inches(0.5)
-            top = Inches(0.5)
-            width = Inches(9)
-            height = Inches(1)
-            
-            title_box = slide.shapes.add_textbox(left, top, width, height)
-            title_frame = title_box.text_frame
-            title_frame.text = slide_data.get('title', '')
-            title_frame.paragraphs[0].font.size = Pt(32)
-            title_frame.paragraphs[0].font.bold = True
-            
-            # Add content
-            content_top = Inches(2)
-            content_height = Inches(4.5)
-            
-            content_box = slide.shapes.add_textbox(left, content_top, width, content_height)
-            content_frame = content_box.text_frame
-            
-            for bullet in slide_data.get('bullets', []):
-                p = content_frame.add_paragraph()
-                p.text = f"• {bullet}"
-                p.font.size = Pt(18)
-            
-            return slide
+
     
     def _generate_slide_previews(self, pptx_path: str, session_id: str) -> List[str]:
         """Generate preview images for slides"""

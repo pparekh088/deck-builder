@@ -25,6 +25,7 @@ from app.services.slide_planner import slide_planner
 from app.services.layout_matcher import layout_matcher
 from app.services.slide_composer import slide_composer
 from app.services.presentation_validator import presentation_validator
+from app.services.mcp_client import mcp_client
 
 # Import the template routes (disabled for now - missing dependencies)
 # from app.api.routes.template import router as template_router
@@ -56,6 +57,26 @@ app.add_middleware(
 if not os.path.exists(settings.upload_dir):
     os.makedirs(settings.upload_dir)
 app.mount("/static", StaticFiles(directory=settings.upload_dir), name="static")
+
+# Startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Initialize MCP client connection on startup"""
+    try:
+        await mcp_client.connect()
+        logger.info("MCP client connected successfully")
+    except Exception as e:
+        logger.warning(f"Failed to connect MCP client on startup: {e}")
+        # Continue running even if MCP connection fails initially
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up MCP client connection on shutdown"""
+    try:
+        await mcp_client.disconnect()
+        logger.info("MCP client disconnected successfully")
+    except Exception as e:
+        logger.error(f"Error disconnecting MCP client: {e}")
 
 # WebSocket connection manager
 class ConnectionManager:
