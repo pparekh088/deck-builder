@@ -1,0 +1,65 @@
+# Core Dependencies
+python-pptx==0.6.23
+openai==1.12.0
+langchain==0.1.0
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.5.3
+
+# AI and ML
+transformers==4.36.2
+sentence-transformers==2.3.1
+numpy==1.26.3
+scikit-learn==1.4.0
+
+# Image Processing
+Pillow==10.2.0
+opencv-python==4.9.0.80
+
+# Database and Storage
+redis==5.0.1
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.25
+pgvector==0.2.4
+
+# Async and Background Tasks
+celery==5.3.4
+aiofiles==23.2.1
+aioredis==2.0.1
+
+# API and Web
+httpx==0.26.0
+python-multipart==0.0.6
+websockets==12.0
+
+# Windows COM Automation (optional, Windows only)
+# pywin32==306
+
+# Cloud APIs (optional)
+azure-identity==1.15.0
+msgraph-sdk==1.2.0
+
+# Monitoring and Logging
+prometheus-client==0.19.0
+python-json-logger==2.0.7
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+
+# Development Tools
+black==24.1.1
+flake8==7.0.0
+mypy==1.8.0
+
+# Rate Limiting
+slowapi==0.1.9
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Documentation
+mkdocs==1.5.3
+mkdocs-material==9.5.3
